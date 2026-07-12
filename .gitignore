@@ -1,0 +1,11 @@
+node_modules/
+frontend/node_modules/
+frontend/dist/
+backend/sing-panel
+backend/bin/
+backend/data/
+backend/config.json
+*.exe
+*.log
+*.tmp
+.mimocode/
