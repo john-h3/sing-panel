@@ -243,6 +243,61 @@
             <el-input-number v-model="form.options.down_mbps" :min="1" />
           </el-form-item>
         </template>
+
+        <!-- Selector/URLTest: select outbounds -->
+        <template v-if="form.type === 'selector' || form.type === 'urltest'">
+          <el-divider content-position="left">出站选择</el-divider>
+
+          <el-form-item label="出站列表">
+            <el-select v-model="form.options.outbounds" multiple filterable placeholder="选择出站">
+              <el-option
+                v-for="ob in availableOutbounds"
+                :key="ob.tag"
+                :label="ob.tag"
+                :value="ob.tag"
+              />
+            </el-select>
+            <div class="form-tip">可拖拽排序，已选中的出站将显示在此列表</div>
+          </el-form-item>
+
+          <el-form-item v-if="form.type === 'urltest'" label="默认出站">
+            <el-select v-model="form.options.default" clearable placeholder="留空使用第一个">
+              <el-option
+                v-for="tag in form.options.outbounds"
+                :key="tag"
+                :label="tag"
+                :value="tag"
+              />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item v-if="form.type === 'urltest'" label="探测地址">
+            <el-input v-model="form.options.url" placeholder="http://www.gstatic.com/generate_204" />
+          </el-form-item>
+
+          <el-form-item v-if="form.type === 'urltest'" label="探测间隔">
+            <el-input v-model="form.options.interval" placeholder="3m" />
+          </el-form-item>
+
+          <el-form-item v-if="form.type === 'urltest'" label="容差 (ms)">
+            <el-input-number v-model="form.options.tolerance" :min="0" :max="65535" />
+          </el-form-item>
+        </template>
+
+        <!-- Bind Interface - only for direct -->
+        <template v-if="form.type === 'direct'">
+          <el-divider content-position="left">网络设置</el-divider>
+          <el-form-item label="绑定网卡">
+            <el-select v-model="form.options.bind_interface" placeholder="不指定 (使用系统默认)" clearable>
+              <el-option
+                v-for="iface in networkInterfaces"
+                :key="iface.name"
+                :label="iface.name"
+                :value="iface.name"
+              />
+            </el-select>
+          </el-form-item>
+        </template>
       </el-form>
 
       <template #footer>
@@ -289,7 +344,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { singboxApi } from '../../api/singbox'
 import { Download, Plus, Upload } from '@element-plus/icons-vue'
@@ -303,6 +358,7 @@ const importLink = ref('')
 const importing = ref(false)
 const editingOutbound = ref(null)
 const outboundTypes = ref([])
+const networkInterfaces = ref([])
 const formRef = ref(null)
 
 // VLESS helper fields
@@ -318,6 +374,14 @@ const form = ref({
   options: {}
 })
 
+// Available outbounds for selector/urltest (exclude current editing outbound)
+const availableOutbounds = computed(() => {
+  return outbounds.value.filter(ob => {
+    if (editingOutbound.value && ob.id === editingOutbound.value.id) return false
+    return true
+  })
+})
+
 const rules = {
   type: [{ required: true, message: '请选择类型', trigger: 'change' }],
   tag: [{ required: true, message: '请输入标签', trigger: 'blur' }]
@@ -329,13 +393,13 @@ const getTypeTag = (type) => {
     block: 'danger',
     selector: 'warning',
     urltest: 'warning',
-    shadowsocks: '',
-    vmess: '',
-    vless: '',
-    trojan: '',
-    hysteria: ''
+    shadowsocks: 'info',
+    vmess: 'info',
+    vless: 'info',
+    trojan: 'info',
+    hysteria: 'info'
   }
-  return map[type] || ''
+  return map[type] || 'info'
 }
 
 // VLESS security change handler
@@ -447,6 +511,17 @@ const loadTypes = async () => {
   }
 }
 
+const loadNetworkInterfaces = async () => {
+  try {
+    const res = await singboxApi.getNetworkInterfaces()
+    if (res.data.success) {
+      networkInterfaces.value = res.data.data || []
+    }
+  } catch (err) {
+    console.error('Failed to load network interfaces:', err)
+  }
+}
+
 const showAddDialog = () => {
   editingOutbound.value = null
   form.value = {
@@ -469,10 +544,10 @@ const outboundTypeFields = {
   vless: ['server', 'server_port', 'uuid', 'flow', 'tls', 'transport'],
   trojan: ['server', 'server_port', 'password'],
   hysteria: ['server', 'server_port', 'auth', 'up_mbps', 'down_mbps'],
-  direct: [],
+  direct: ['bind_interface'],
   block: [],
-  selector: [],
-  urltest: []
+  selector: ['outbounds', 'default'],
+  urltest: ['outbounds', 'default', 'url', 'interval', 'tolerance']
 }
 
 const editOutbound = (outbound) => {
@@ -710,6 +785,7 @@ const doImport = () => {
 onMounted(() => {
   loadOutbounds()
   loadTypes()
+  loadNetworkInterfaces()
 })
 </script>
 
@@ -723,6 +799,12 @@ onMounted(() => {
 
 .card-header .el-button {
   margin-left: auto;
+}
+
+.form-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .import-alert {

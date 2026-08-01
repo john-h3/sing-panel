@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -133,5 +134,83 @@ func (d *Database) UpdateKernelState(fn func(state *models.KernelState)) error {
 			return err
 		}
 		return b.Put([]byte("kernel"), newData)
+	})
+}
+
+// ListBuckets returns all bucket names
+func (d *Database) ListBuckets() ([]string, error) {
+	var buckets []string
+	err := d.db.View(func(tx *bolt.Tx) error {
+		return tx.ForEach(func(name []byte, _ *bolt.Bucket) error {
+			buckets = append(buckets, string(name))
+			return nil
+		})
+	})
+	return buckets, err
+}
+
+// ListKeys returns all keys in a bucket
+func (d *Database) ListKeys(bucket string) ([]string, error) {
+	var keys []string
+	err := d.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		if b == nil {
+			return fmt.Errorf("bucket %q not found", bucket)
+		}
+		return b.ForEach(func(k, _ []byte) error {
+			keys = append(keys, string(k))
+			return nil
+		})
+	})
+	return keys, err
+}
+
+// GetValue returns the raw value for a bucket/key as string
+func (d *Database) GetValue(bucket, key string) (string, error) {
+	var result string
+	err := d.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		if b == nil {
+			return fmt.Errorf("bucket %q not found", bucket)
+		}
+		data := b.Get([]byte(key))
+		if data == nil {
+			return fmt.Errorf("key %q not found", key)
+		}
+		// Try to format as JSON
+		var pretty bytes.Buffer
+		if json.Indent(&pretty, data, "", "  ") == nil {
+			result = pretty.String()
+		} else {
+			result = string(data)
+		}
+		return nil
+	})
+	return result, err
+}
+
+// PutValue stores a raw string value for a bucket/key
+func (d *Database) PutValue(bucket, key, value string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		if b == nil {
+			return fmt.Errorf("bucket %q not found", bucket)
+		}
+		// Validate JSON
+		if !json.Valid([]byte(value)) {
+			return fmt.Errorf("invalid JSON")
+		}
+		return b.Put([]byte(key), []byte(value))
+	})
+}
+
+// DeleteKey removes a key from a bucket
+func (d *Database) DeleteKey(bucket, key string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		if b == nil {
+			return fmt.Errorf("bucket %q not found", bucket)
+		}
+		return b.Delete([]byte(key))
 	})
 }

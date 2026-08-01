@@ -5,7 +5,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -15,11 +17,12 @@ type DownloadProgressFunc func(progress float64, speed int64)
 
 // DownloadOptions configures the download behavior
 type DownloadOptions struct {
-	URL           string
-	DestPath      string
-	AccelerateURL string // If set, use this as prefix instead of direct URL
-	OnProgress    DownloadProgressFunc
-	StopChan      <-chan struct{}
+	URL              string
+	DestPath         string
+	AccelerateURL    string   // If set, use this as prefix instead of direct URL
+	AccelerateDomains []string // Domains that should be accelerated
+	OnProgress       DownloadProgressFunc
+	StopChan         <-chan struct{}
 }
 
 // Downloader handles file downloads with accelerate domain support
@@ -49,12 +52,36 @@ func GetAccelerateURL(rawURL, accelerateDomain string) string {
 	return domain + "/" + rawURL
 }
 
+// ShouldAccelerate checks if the URL's domain matches any of the configured accelerate domains.
+// If accelerateDomains is empty, all URLs are eligible for acceleration (legacy behavior).
+func ShouldAccelerate(rawURL string, accelerateDomains []string) bool {
+	if len(accelerateDomains) == 0 {
+		return true // no filter configured, accelerate all
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	for _, pattern := range accelerateDomains {
+		p := strings.ToLower(strings.TrimSpace(pattern))
+		if p == "" {
+			continue
+		}
+		// exact match or suffix match (e.g. "github.com" matches "raw.githubusercontent.com")
+		if host == p || strings.HasSuffix(host, "."+p) {
+			return true
+		}
+	}
+	return false
+}
+
 // Download downloads a file from the given URL to destPath
-// It applies the accelerate domain if configured
+// It applies the accelerate domain if configured and URL matches the filter
 func (d *Downloader) Download(opts DownloadOptions) error {
 	// Determine final URL
 	finalURL := opts.URL
-	if opts.AccelerateURL != "" {
+	if opts.AccelerateURL != "" && ShouldAccelerate(opts.URL, opts.AccelerateDomains) {
 		finalURL = GetAccelerateURL(opts.URL, opts.AccelerateURL)
 		slog.Info("using accelerate domain", "original", opts.URL, "accelerated", finalURL)
 	} else {

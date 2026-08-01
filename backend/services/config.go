@@ -28,7 +28,18 @@ func (s *ConfigService) Get() models.AppConfig {
 func (s *ConfigService) Update(req models.ConfigUpdateRequest) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.conf.AccelerateDomain = req.AccelerateDomain
+	if req.AccelerateDomain != nil {
+		s.conf.AccelerateDomain = *req.AccelerateDomain
+	}
+	if req.AccelerateDomains != nil {
+		s.conf.AccelerateDomains = *req.AccelerateDomains
+	}
+	if req.DashboardURL != nil {
+		s.conf.DashboardURL = *req.DashboardURL
+	}
+	if req.Dashboards != nil {
+		s.conf.Dashboards = *req.Dashboards
+	}
 	s.saveToDB()
 }
 
@@ -39,7 +50,7 @@ func (s *ConfigService) loadFromDB() {
 		return
 	}
 	s.conf = conf
-	slog.Info("config loaded", "accelerateDomain", conf.AccelerateDomain)
+	slog.Info("config loaded", "accelerateDomain", conf.AccelerateDomain, "accelerateDomains", conf.AccelerateDomains)
 }
 
 func (s *ConfigService) saveToDB() {

@@ -170,32 +170,17 @@
       </template>
 
       <el-tabs v-model="downloadType" type="border-card">
-        <el-tab-pane label="Latest (最新版)" name="latest">
+        <el-tab-pane label="Adapted (适配版)" name="adapted">
           <div class="tab-content">
-            <p class="tab-desc">下载最新的开发版本，包含最新功能和修复</p>
-            <el-button
-              type="primary"
-              @click="startDownload('latest')"
-              :loading="downloadProgress.active"
-              :disabled="downloadProgress.active"
-            >
-              <el-icon><Download /></el-icon>
-              下载 Latest 版本
-            </el-button>
-          </div>
-        </el-tab-pane>
-
-        <el-tab-pane label="Stable (稳定版)" name="stable">
-          <div class="tab-content">
-            <p class="tab-desc">下载经过测试的稳定版本，推荐生产环境使用</p>
+            <p class="tab-desc">下载与当前管理平台适配的内核版本，最稳定</p>
             <el-button
               type="success"
-              @click="startDownload('stable')"
+              @click="startDownload('adapted')"
               :loading="downloadProgress.active"
               :disabled="downloadProgress.active"
             >
               <el-icon><Download /></el-icon>
-              下载 Stable 版本
+              下载适配版本
             </el-button>
           </div>
         </el-tab-pane>
@@ -333,7 +318,7 @@ const controlling = ref(false)
 const versions = ref([])
 const loadingVersions = ref(false)
 const cacheTime = ref(null)
-const downloadType = ref('latest')
+const downloadType = ref('adapted')
 const downloadProgress = ref({
   active: false,
   progress: 0,
@@ -653,7 +638,7 @@ onUnmounted(() => {
 
 .page-title {
   margin: 0 0 24px 0;
-  color: #303133;
+  color: var(--text-primary);
   font-size: 24px;
   font-weight: 600;
 }
@@ -664,6 +649,8 @@ onUnmounted(() => {
 
 .status-card {
   min-height: 240px;
+  background: var(--bg-card);
+  border-color: var(--border-color);
 }
 
 .card-header {
@@ -671,6 +658,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   font-weight: 600;
+  color: var(--text-primary);
 }
 
 .card-header.danger {
@@ -681,7 +669,7 @@ onUnmounted(() => {
   margin-left: auto;
   margin-right: 16px;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-secondary);
   font-weight: normal;
 }
 
@@ -702,7 +690,7 @@ onUnmounted(() => {
 }
 
 .status-info {
-  color: #606266;
+  color: var(--text-regular);
   font-size: 14px;
 }
 
@@ -711,7 +699,7 @@ onUnmounted(() => {
 }
 
 .system-info {
-  color: #606266;
+  color: var(--text-regular);
   font-size: 14px;
 }
 
@@ -733,7 +721,7 @@ onUnmounted(() => {
 
 .pid-info {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-secondary);
 }
 
 .control-buttons {
@@ -743,7 +731,7 @@ onUnmounted(() => {
 
 .runtime-info {
   font-size: 12px;
-  color: #606266;
+  color: var(--text-regular);
 }
 
 .runtime-info p {
@@ -752,6 +740,8 @@ onUnmounted(() => {
 
 .section-card {
   margin-bottom: 24px;
+  background: var(--bg-card);
+  border-color: var(--border-color);
 }
 
 .tab-content {
@@ -759,7 +749,7 @@ onUnmounted(() => {
 }
 
 .tab-desc {
-  color: #909399;
+  color: var(--text-secondary);
   margin-bottom: 16px;
 }
 
@@ -772,7 +762,7 @@ onUnmounted(() => {
 .progress-info {
   display: flex;
   justify-content: space-between;
-  color: #606266;
+  color: var(--text-regular);
   font-size: 14px;
 }
 
@@ -795,7 +785,7 @@ onUnmounted(() => {
 }
 
 .danger-content p {
-  color: #909399;
+  color: var(--text-secondary);
   margin: 0;
 }
 </style>

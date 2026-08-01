@@ -21,7 +21,12 @@
         </el-table-column>
         <el-table-column label="监听地址" width="150">
           <template #default="{ row }">
-            {{ row.listen || '0.0.0.0' }}:{{ row.listenPort }}
+            <template v-if="row.type !== 'tun'">
+              {{ row.listen || '0.0.0.0' }}:{{ row.listenPort }}
+            </template>
+            <template v-else>
+              {{ (row.options?.address || []).join(', ') || '-' }}
+            </template>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="80">
@@ -68,13 +73,59 @@
           <el-input v-model="form.tag" placeholder="例如: http-in" />
         </el-form-item>
 
-        <el-form-item label="监听地址">
-          <el-input v-model="form.listen" placeholder="0.0.0.0" />
-        </el-form-item>
+        <template v-if="form.type !== 'tun'">
+          <el-form-item label="监听地址">
+            <el-input v-model="form.listen" placeholder="0.0.0.0" />
+          </el-form-item>
 
-        <el-form-item label="监听端口" prop="listenPort">
-          <el-input-number v-model="form.listenPort" :min="1" :max="65535" />
-        </el-form-item>
+          <el-form-item label="监听端口" prop="listenPort">
+            <el-input-number v-model="form.listenPort" :min="1" :max="65535" />
+          </el-form-item>
+        </template>
+
+        <!-- TUN specific fields -->
+        <template v-if="form.type === 'tun'">
+          <el-divider content-position="left">TUN 配置</el-divider>
+
+          <el-form-item label="网段地址" required>
+            <div class="tun-address-list">
+              <div v-for="(addr, idx) in tunAddressList" :key="idx" class="tun-address-row">
+                <el-input v-model="tunAddressList[idx]" placeholder="例: 172.19.0.1/30 或 fdfe:dcba:9876::1/126" />
+                <el-button type="danger" link @click="removeTunAddress(idx)" :disabled="tunAddressList.length <= 1">
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </div>
+              <el-button type="primary" link @click="addTunAddress">
+                <el-icon><Plus /></el-icon>
+                添加地址
+              </el-button>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="MTU">
+            <el-input-number v-model="tunMtu" :min="576" :max="65535" />
+          </el-form-item>
+
+          <el-form-item label="Stack">
+            <el-select v-model="tunStack">
+              <el-option label="system" value="system" />
+              <el-option label="gvisor" value="gvisor" />
+              <el-option label="mixed" value="mixed" />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item label="自动路由">
+            <el-switch v-model="tunAutoRoute" />
+          </el-form-item>
+
+          <el-form-item label="自动重定向">
+            <el-switch v-model="tunAutoRedirect" />
+          </el-form-item>
+
+          <el-form-item label="严格路由">
+            <el-switch v-model="tunStrictRoute" />
+          </el-form-item>
+        </template>
 
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
@@ -93,7 +144,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { singboxApi } from '../../api/singbox'
-import { Upload, Plus } from '@element-plus/icons-vue'
+import { Upload, Plus, Delete } from '@element-plus/icons-vue'
 
 const inbounds = ref([])
 const loading = ref(false)
@@ -112,10 +163,28 @@ const form = ref({
   options: {}
 })
 
+// TUN specific fields
+const tunAddressList = ref(['172.19.0.1/30'])
+const tunMtu = ref(9000)
+const tunStack = ref('gvisor')
+const tunAutoRoute = ref(true)
+const tunAutoRedirect = ref(true)
+const tunStrictRoute = ref(true)
+
 const rules = {
   type: [{ required: true, message: '请选择类型', trigger: 'change' }],
   tag: [{ required: true, message: '请输入标签', trigger: 'blur' }],
   listenPort: [{ required: true, message: '请输入端口', trigger: 'blur' }]
+}
+
+const addTunAddress = () => {
+  tunAddressList.value.push('')
+}
+
+const removeTunAddress = (idx) => {
+  if (tunAddressList.value.length > 1) {
+    tunAddressList.value.splice(idx, 1)
+  }
 }
 
 const loadInbounds = async () => {
@@ -153,17 +222,38 @@ const showAddDialog = () => {
     enabled: true,
     options: {}
   }
+  resetTunFields()
   dialogVisible.value = true
+}
+
+const resetTunFields = () => {
+  tunAddressList.value = ['172.19.0.1/30']
+  tunMtu.value = 9000
+  tunStack.value = 'gvisor'
+  tunAutoRoute.value = true
+  tunAutoRedirect.value = true
+  tunStrictRoute.value = true
 }
 
 const editInbound = (inbound) => {
   editingInbound.value = inbound
   form.value = { ...inbound, options: { ...inbound.options } }
+
+  if (inbound.type === 'tun' && inbound.options) {
+    tunAddressList.value = [...(inbound.options.address || ['172.19.0.1/30'])]
+    tunMtu.value = inbound.options.mtu ?? 9000
+    tunStack.value = inbound.options.stack || 'gvisor'
+    tunAutoRoute.value = inbound.options.auto_route !== false
+    tunAutoRedirect.value = inbound.options.auto_redirect !== false
+    tunStrictRoute.value = inbound.options.strict_route !== false
+  } else {
+    resetTunFields()
+  }
+
   dialogVisible.value = true
 }
 
 const onTypeChange = (type) => {
-  // Set default port based on type
   const portMap = {
     http: 8080,
     socks: 1080,
@@ -172,6 +262,9 @@ const onTypeChange = (type) => {
     shadowsocks: 8388
   }
   form.value.listenPort = portMap[type] || 8080
+  if (type === 'tun') {
+    resetTunFields()
+  }
 }
 
 const saveInbound = async () => {
@@ -181,13 +274,36 @@ const saveInbound = async () => {
     return
   }
 
+  const payload = { ...form.value }
+
+  if (payload.type === 'tun') {
+    delete payload.listen
+    delete payload.listenPort
+
+    const validAddresses = tunAddressList.value.filter(a => a.trim())
+    if (validAddresses.length === 0) {
+      ElMessage.warning('请至少添加一个网段地址')
+      return
+    }
+
+    payload.options = {
+      ...payload.options,
+      address: validAddresses,
+      mtu: tunMtu.value,
+      stack: tunStack.value,
+      auto_route: tunAutoRoute.value,
+      auto_redirect: tunAutoRedirect.value,
+      strict_route: tunStrictRoute.value,
+    }
+  }
+
   saving.value = true
   try {
     if (editingInbound.value) {
-      await singboxApi.updateInbound(form.value)
+      await singboxApi.updateInbound(payload)
       ElMessage.success('更新成功')
     } else {
-      await singboxApi.addInbound(form.value)
+      await singboxApi.addInbound(payload)
       ElMessage.success('添加成功')
     }
     dialogVisible.value = false
@@ -242,5 +358,24 @@ onMounted(() => {
 
 .card-header .el-button {
   margin-left: auto;
+}
+
+.tun-address-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.tun-address-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 </style>

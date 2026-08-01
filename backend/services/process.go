@@ -21,10 +21,10 @@ const (
 )
 
 type ProcessService struct {
-	db             *Database
-	configService  *SingBoxConfigService
-	kernelService  *KernelService
-	statsService   *StatsService
+	db            *Database
+	configService *SingBoxConfigService
+	kernelService *KernelService
+	statsService  *StatsService
 }
 
 func NewProcessService(db *Database, configService *SingBoxConfigService, kernelService *KernelService, statsService *StatsService) *ProcessService {

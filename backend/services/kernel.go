@@ -24,6 +24,7 @@ const (
 	singBoxBinName      = "sing-box"
 	githubAPIURL        = "https://api.github.com/repos/SagerNet/sing-box/releases"
 	cacheExpireDuration = 1 * time.Hour
+	adaptedVersion      = "1.14.0-alpha.43"
 )
 
 type KernelService struct {
@@ -292,9 +293,53 @@ func (s *KernelService) isRelevantAsset(name string) bool {
 	}
 
 	nameLower := strings.ToLower(name)
+	isMusl := isMuslSystem()
+
+	if platform == "linux" {
+		// On musl system (Alpine), prefer musl assets
+		if isMusl {
+			return strings.Contains(nameLower, "linux") &&
+				strings.Contains(nameLower, mappedArch) &&
+				strings.Contains(nameLower, "musl") &&
+				strings.HasSuffix(nameLower, ".tar.gz")
+		}
+		// On glibc system, prefer non-musl assets
+		return strings.Contains(nameLower, "linux") &&
+			strings.Contains(nameLower, mappedArch) &&
+			!strings.Contains(nameLower, "musl") &&
+			strings.HasSuffix(nameLower, ".tar.gz")
+	}
+
 	return strings.Contains(nameLower, platform) &&
 		strings.Contains(nameLower, mappedArch) &&
 		strings.HasSuffix(nameLower, ".tar.gz")
+}
+
+// isMuslSystem checks if the system uses musl libc (e.g., Alpine Linux)
+func isMuslSystem() bool {
+	// Check /etc/os-release for Alpine
+	if data, err := os.ReadFile("/etc/os-release"); err == nil {
+		content := strings.ToLower(string(data))
+		if strings.Contains(content, "alpine") {
+			return true
+		}
+	}
+
+	// Check ldd --version output
+	if out, err := exec.Command("ldd", "--version").CombinedOutput(); err == nil {
+		if strings.Contains(strings.ToLower(string(out)), "musl") {
+			return true
+		}
+	}
+
+	// Check if ldd is from musl
+	if out, err := exec.Command("ldd", "--help").CombinedOutput(); err == nil {
+		if strings.Contains(strings.ToLower(string(out)), "musl") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Download starts downloading a kernel version
@@ -338,17 +383,8 @@ func (s *KernelService) doDownload(req models.DownloadRequest) {
 	var version string
 
 	switch req.Type {
-	case "latest":
-		url, ver, err := s.getLatestVersion()
-		if err != nil {
-			s.updateProgress(false, 0, "failed", "", err.Error())
-			return
-		}
-		downloadURL = url
-		version = ver
-
-	case "stable":
-		url, ver, err := s.getStableVersion()
+	case "adapted":
+		url, ver, err := s.getAdaptedVersion()
 		if err != nil {
 			s.updateProgress(false, 0, "failed", "", err.Error())
 			return
@@ -376,9 +412,10 @@ func (s *KernelService) doDownload(req models.DownloadRequest) {
 
 	// Download using the abstracted downloader
 	tmpPath, err := s.downloader.DownloadToTemp(DownloadOptions{
-		URL:          downloadURL,
-		AccelerateURL: s.configService.Get().AccelerateDomain,
-		StopChan:     s.stopChan,
+		URL:              downloadURL,
+		AccelerateURL:    s.configService.Get().AccelerateDomain,
+		AccelerateDomains: s.configService.Get().AccelerateDomains,
+		StopChan:         s.stopChan,
 		OnProgress: func(progress float64, speed int64) {
 			// Map 0-100 to 10-60 for download phase
 			s.updateProgress(true, 10+progress*0.5, "downloading", version, "")
@@ -439,36 +476,35 @@ func (s *KernelService) updateProgress(active bool, progress float64, status, ve
 	}
 }
 
-func (s *KernelService) getLatestVersion() (string, string, error) {
-	versions, err := s.GetVersions()
-	if err != nil {
-		return "", "", err
-	}
-	if len(versions) == 0 {
-		return "", "", fmt.Errorf("no versions found")
-	}
-
-	v := versions[0]
-	if len(v.Assets) == 0 {
-		return "", "", fmt.Errorf("no assets found for version %s", v.Version)
-	}
-
-	return v.Assets[0].DownloadURL, v.Version, nil
-}
-
-func (s *KernelService) getStableVersion() (string, string, error) {
+func (s *KernelService) getAdaptedVersion() (string, string, error) {
 	versions, err := s.GetVersions()
 	if err != nil {
 		return "", "", err
 	}
 
 	for _, v := range versions {
-		if !v.Prerelease && len(v.Assets) > 0 {
-			return v.Assets[0].DownloadURL, v.Version, nil
+		if v.Version == adaptedVersion && len(v.Assets) > 0 {
+			// Find the best asset for current system
+			bestAsset := v.Assets[0]
+			isMusl := isMuslSystem()
+
+			for _, asset := range v.Assets {
+				nameLower := strings.ToLower(asset.Name)
+				if isMusl && strings.Contains(nameLower, "musl") {
+					bestAsset = asset
+					break
+				}
+				if !isMusl && !strings.Contains(nameLower, "musl") {
+					bestAsset = asset
+					break
+				}
+			}
+
+			return bestAsset.DownloadURL, v.Version, nil
 		}
 	}
 
-	return "", "", fmt.Errorf("no stable version found")
+	return "", "", fmt.Errorf("adapted version %s not found", adaptedVersion)
 }
 
 func (s *KernelService) extractArchive(archivePath string) error {
@@ -541,15 +577,32 @@ func (s *KernelService) SwitchVersion(version string) error {
 		return err
 	}
 
+	isMusl := isMuslSystem()
+
 	for _, v := range versions {
 		if v.Version == version {
 			if len(v.Assets) == 0 {
 				return fmt.Errorf("no assets found for version %s", version)
 			}
+
+			// Find the best asset for current system
+			bestAsset := v.Assets[0]
+			for _, asset := range v.Assets {
+				nameLower := strings.ToLower(asset.Name)
+				if isMusl && strings.Contains(nameLower, "musl") {
+					bestAsset = asset
+					break
+				}
+				if !isMusl && !strings.Contains(nameLower, "musl") {
+					bestAsset = asset
+					break
+				}
+			}
+
 			return s.Download(models.DownloadRequest{
 				Type:    "custom",
 				Version: version,
-				URL:     v.Assets[0].DownloadURL,
+				URL:     bestAsset.DownloadURL,
 			})
 		}
 	}

@@ -18,3 +18,36 @@ body {
 .el-form-item__label {
   pointer-events: none;
 }
+
+/* Dark mode custom variables */
+:root {
+  --bg-page: #f5f7fa;
+  --bg-card: #ffffff;
+  --bg-card-hover: #ffffff;
+  --text-primary: #303133;
+  --text-regular: #606266;
+  --text-secondary: #909399;
+  --border-color: #e4e7ed;
+  --sidebar-bg: #1d1e1f;
+  --sidebar-border: #333;
+  --active-menu-bg: #ecf5ff;
+}
+
+html.dark {
+  --bg-page: #141414;
+  --bg-card: #1d1d1d;
+  --bg-card-hover: #262626;
+  --text-primary: #e5eaf3;
+  --text-regular: #cfd3dc;
+  --text-secondary: #a3a6ad;
+  --border-color: #4c4d4f;
+  --sidebar-bg: #0d0d0d;
+  --sidebar-border: #333;
+  --active-menu-bg: #18222c;
+
+  color-scheme: dark;
+}
+
+html.dark body {
+  background-color: var(--bg-page);
+}
