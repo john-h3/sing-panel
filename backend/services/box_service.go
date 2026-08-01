@@ -2,15 +2,15 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/sagernet/sing-box"
+	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing/common/json"
-	"github.com/sagernet/sing/service"
 )
 
 // BoxService wraps sing-box as an embedded library
@@ -38,18 +38,25 @@ func (s *BoxService) Start(configJSON []byte) error {
 		return fmt.Errorf("sing-box already running")
 	}
 
+	slog.Info("starting embedded sing-box", "config_size", len(configJSON))
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 
-	// Set up context with default registries
-	ctx = service.ContextWithDefaultRegistry(ctx)
-
-	// Parse config with context (required for type registry)
-	options, err := json.UnmarshalExtendedContext[option.Options](ctx, configJSON)
-	if err != nil {
+	// Parse config using standard JSON unmarshal
+	var options option.Options
+	if err := json.Unmarshal(configJSON, &options); err != nil {
 		cancel()
+		slog.Error("failed to parse config", "error", err)
 		return fmt.Errorf("failed to parse config: %w", err)
 	}
+
+	slog.Info("config parsed successfully")
+
+	// Set up context with all registries using include package
+	ctx = include.Context(ctx)
+
+	slog.Info("registries set up")
 
 	// Create sing-box instance
 	b, err := box.New(box.Options{
@@ -58,12 +65,16 @@ func (s *BoxService) Start(configJSON []byte) error {
 	})
 	if err != nil {
 		cancel()
+		slog.Error("failed to create sing-box", "error", err)
 		return fmt.Errorf("failed to create sing-box: %w", err)
 	}
+
+	slog.Info("sing-box instance created")
 
 	// Start the instance
 	if err := b.Start(); err != nil {
 		cancel()
+		slog.Error("failed to start sing-box", "error", err)
 		return fmt.Errorf("failed to start sing-box: %w", err)
 	}
 
