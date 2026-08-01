@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -11,6 +10,7 @@ import (
 	"github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common/json"
 )
 
 // BoxService wraps sing-box as an embedded library
@@ -43,20 +43,19 @@ func (s *BoxService) Start(configJSON []byte) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 
-	// Parse config using standard JSON unmarshal
-	var options option.Options
-	if err := json.Unmarshal(configJSON, &options); err != nil {
+	// Set up context with all registries first (required for config parsing)
+	ctx = include.Context(ctx)
+	slog.Info("registries set up")
+
+	// Parse config using extended JSON unmarshal (requires context for type registry)
+	options, err := json.UnmarshalExtendedContext[option.Options](ctx, configJSON)
+	if err != nil {
 		cancel()
 		slog.Error("failed to parse config", "error", err)
 		return fmt.Errorf("failed to parse config: %w", err)
 	}
 
 	slog.Info("config parsed successfully")
-
-	// Set up context with all registries using include package
-	ctx = include.Context(ctx)
-
-	slog.Info("registries set up")
 
 	// Create sing-box instance
 	b, err := box.New(box.Options{

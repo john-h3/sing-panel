@@ -89,10 +89,13 @@ func main() {
 
 	// Initialize services
 	configService := services.NewConfigService(db)
-	kernelService := services.NewKernelService(configService, db)
+	kernelService := services.NewKernelService(db)
 	singboxConfigService := services.NewSingBoxConfigService(db)
 	statsService := services.NewStatsService(db)
 	processService := services.NewProcessService(db, singboxConfigService, kernelService, statsService)
+
+	// Mark kernel as installed (embedded mode)
+	kernelService.SetInstalled(true)
 
 	// Start tree cache refresh loop
 	singboxConfigService.StartTreeRefreshLoop()
@@ -157,12 +160,6 @@ func main() {
 		{
 			kernel.GET("/status", kernelHandler.GetStatus)
 			kernel.GET("/system", kernelHandler.GetSystemInfo)
-			kernel.GET("/versions", kernelHandler.GetVersions)
-			kernel.POST("/versions/refresh", kernelHandler.RefreshVersions)
-			kernel.POST("/download", kernelHandler.Download)
-			kernel.POST("/stop", kernelHandler.StopDownload)
-			kernel.DELETE("", kernelHandler.Remove)
-			kernel.POST("/switch", kernelHandler.SwitchVersion)
 		}
 
 		config := api.Group("/config")

@@ -52,9 +52,9 @@ echo "Building backend for ${GOOS:-$(go env GOOS)}/${GOARCH:-$(go env GOARCH)}..
 cd backend
 go mod tidy
 if [ -n "$GOOS" ]; then
-  CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH ${GOARM:+GOARM=$GOARM} go build -o ../$BUILD_DIR/$OUTPUT .
+  CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH ${GOARM:+GOARM=$GOARM} go build -tags "with_utls with_quic" -o ../$BUILD_DIR/$OUTPUT .
 else
-  go build -o ../$BUILD_DIR/$OUTPUT .
+  go build -tags "with_utls with_quic" -o ../$BUILD_DIR/$OUTPUT .
 fi
 cd ..
 

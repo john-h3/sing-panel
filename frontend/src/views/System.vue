@@ -611,11 +611,28 @@ const stopProgressPolling = () => {
   }
 }
 
+let processPollInterval = null
+
+const startProcessPolling = () => {
+  stopProcessPolling()
+  processPollInterval = setInterval(() => {
+    loadProcessStatus()
+  }, 5000)
+}
+
+const stopProcessPolling = () => {
+  if (processPollInterval) {
+    clearInterval(processPollInterval)
+    processPollInterval = null
+  }
+}
+
 onMounted(() => {
   loadStatus()
   loadSystemInfo()
   loadProcessStatus()
   loadVersions()
+  startProcessPolling()
   // Update uptime display every 60 seconds
   uptimeInterval = setInterval(() => {
     uptimeTick.value++
@@ -624,6 +641,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopProgressPolling()
+  stopProcessPolling()
   if (uptimeInterval) {
     clearInterval(uptimeInterval)
   }
