@@ -57,7 +57,9 @@
         :data="routeRules"
         v-loading="loading"
         stripe
+        @selection-change="onSelectionChange"
       >
+        <el-table-column type="selection" width="45" />
         <el-table-column label="#" width="60">
           <template #default="{ row, $index }">
             <span
@@ -121,7 +123,50 @@
             </el-button>
           </template>
         </el-table-column>
-      </el-table>
+        </el-table>
+
+      <div v-if="selectedRules.length > 0" class="batch-actions">
+        <span class="batch-count">已选择 {{ selectedRules.length }} 条</span>
+        <el-select
+          v-model="batchInboundTag"
+          placeholder="选择入站"
+          filterable
+          clearable
+          size="small"
+          class="batch-select"
+        >
+          <el-option
+            v-for="ib in allInbounds"
+            :key="ib.tag"
+            :label="ib.tag"
+            :value="ib.tag"
+          />
+        </el-select>
+        <el-button type="primary" size="small" @click="batchAddInbound" :disabled="!batchInboundTag">
+          加入入站
+        </el-button>
+        <el-select
+          v-model="batchOutboundTag"
+          placeholder="选择出站"
+          filterable
+          clearable
+          size="small"
+          class="batch-select"
+        >
+          <el-option
+            v-for="ob in enabledOutbounds"
+            :key="ob.tag"
+            :label="ob.tag"
+            :value="ob.tag"
+          />
+        </el-select>
+        <el-button type="success" size="small" @click="batchSetOutbound" :disabled="!batchOutboundTag">
+          设置出站
+        </el-button>
+        <el-button type="danger" size="small" @click="batchDelete">
+          批量删除
+        </el-button>
+      </div>
     </el-card>
 
     <!-- Add/Edit Dialog -->
@@ -219,6 +264,9 @@ const savingConfig = ref(false)
 const dialogVisible = ref(false)
 const editingIndex = ref(null)
 const tableRef = ref(null)
+const selectedRules = ref([])
+const batchInboundTag = ref('')
+const batchOutboundTag = ref('')
 
 const routeConfig = ref({ final: '', default_http_client: '' })
 
@@ -372,6 +420,51 @@ const deleteRule = async (rule) => {
   }
 }
 
+const onSelectionChange = (rules) => {
+  selectedRules.value = rules
+}
+
+const updateSelectedRules = async (data, message) => {
+  if (selectedRules.value.length === 0) return
+  try {
+    await singboxApi.batchUpdateRouteRules({
+      ids: selectedRules.value.map(rule => rule.id),
+      ...data
+    })
+    ElMessage.success(message)
+    batchInboundTag.value = ''
+    batchOutboundTag.value = ''
+    await loadData()
+  } catch (err) {
+    ElMessage.error('批量更新失败: ' + (err.response?.data?.error || err.message))
+  }
+}
+
+const batchAddInbound = () => {
+  updateSelectedRules({ inbounds: [batchInboundTag.value] }, '已批量加入入站（重复项已自动忽略）')
+}
+
+const batchSetOutbound = () => {
+  updateSelectedRules({ outbound: batchOutboundTag.value }, '已批量设置出站')
+}
+
+const batchDelete = async () => {
+  if (selectedRules.value.length === 0) return
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除选中的 ${selectedRules.value.length} 条路由规则吗？`,
+      '批量删除',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+    await singboxApi.batchDeleteRouteRules(selectedRules.value.map(rule => rule.id))
+    ElMessage.success('批量删除成功')
+    selectedRules.value = []
+    await loadData()
+  } catch (err) {
+    if (err !== 'cancel') ElMessage.error('批量删除失败: ' + (err.response?.data?.error || err.message))
+  }
+}
+
 const onDragStart = (e, index) => {
   dragIndex.value = index
   e.dataTransfer.effectAllowed = 'move'
@@ -502,5 +595,23 @@ onMounted(async () => {
 
 .config-card {
   margin-bottom: 16px;
+}
+
+.batch-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.batch-count {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-right: 4px;
+}
+
+.batch-select {
+  width: 180px;
 }
 </style>

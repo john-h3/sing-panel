@@ -4,12 +4,16 @@ frontend/dist/
 backend/frontend/
 backend/bin/
 backend/data/
+backend/backend/
+data/
 backend/config.json
 build/
 *.exe
 *.log
 *.tmp
 .mimocode/
+.codewhale/
 dashboard/
 zashboard/
 *.db
+deploy_*.sh

@@ -8,8 +8,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"sing_panel/models"
 
@@ -22,11 +26,13 @@ type SingBoxConfigService struct {
 	geoTreeTime     time.Time
 	commonTreeCache map[string]interface{}
 	commonTreeTime  time.Time
+	configService   *ConfigService
 }
 
-func NewSingBoxConfigService(db *Database) *SingBoxConfigService {
+func NewSingBoxConfigService(db *Database, configService *ConfigService) *SingBoxConfigService {
 	s := &SingBoxConfigService{
-		db: db,
+		db:            db,
+		configService: configService,
 	}
 	// Load cached trees from DB on startup
 	s.loadTreeCacheFromDB()
@@ -232,7 +238,11 @@ func (s *SingBoxConfigService) UpdateInbound(inbound models.Inbound) (models.Inb
 
 	for i, item := range config.Inbounds {
 		if item.ID == inbound.ID {
+			oldTag := item.Tag
 			config.Inbounds[i] = inbound
+			if oldTag != inbound.Tag {
+				s.renameInboundReferences(&config, oldTag, inbound.Tag)
+			}
 			if err := s.SaveConfig(config); err != nil {
 				return models.Inbound{}, err
 			}
@@ -241,6 +251,45 @@ func (s *SingBoxConfigService) UpdateInbound(inbound models.Inbound) (models.Inb
 	}
 
 	return models.Inbound{}, fmt.Errorf("inbound not found")
+}
+
+// renameInboundReferences updates route rules when an inbound tag changes.
+// Route rules normally store inbound tags in RouteRule.Inbound, but custom
+// rule options may also contain an inbound field after importing a config.
+func (s *SingBoxConfigService) renameInboundReferences(config *models.SingBoxConfig, oldTag, newTag string) {
+	if oldTag == "" || oldTag == newTag {
+		return
+	}
+
+	for i := range config.RouteRules {
+		rule := &config.RouteRules[i]
+		for j, tag := range rule.Inbound {
+			if tag == oldTag {
+				rule.Inbound[j] = newTag
+			}
+		}
+
+		if raw, ok := rule.Options["inbound"]; ok {
+			switch value := raw.(type) {
+			case []string:
+				for i, tag := range value {
+					if tag == oldTag {
+						value[i] = newTag
+					}
+				}
+			case []interface{}:
+				for i, tag := range value {
+					if tag, ok := tag.(string); ok && tag == oldTag {
+						value[i] = newTag
+					}
+				}
+			case string:
+				if value == oldTag {
+					rule.Options["inbound"] = newTag
+				}
+			}
+		}
+	}
 }
 
 // DeleteInbound deletes an inbound configuration
@@ -253,11 +302,61 @@ func (s *SingBoxConfigService) DeleteInbound(id string) error {
 	for i, item := range config.Inbounds {
 		if item.ID == id {
 			config.Inbounds = append(config.Inbounds[:i], config.Inbounds[i+1:]...)
+			s.removeInboundReferences(&config, item.Tag)
 			return s.SaveConfig(config)
 		}
 	}
 
 	return fmt.Errorf("inbound not found")
+}
+
+// removeInboundReferences removes an inbound tag from route rules. Rules that
+// lose their last match condition are removed so they cannot accidentally
+// become catch-all rules after the inbound is deleted.
+func (s *SingBoxConfigService) removeInboundReferences(config *models.SingBoxConfig, tag string) {
+	if tag == "" {
+		return
+	}
+
+	removedTags := map[string]bool{tag: true}
+	keptRouteRules := make([]models.RouteRule, 0, len(config.RouteRules))
+	for _, rule := range config.RouteRules {
+		rule.Inbound = filterTags(rule.Inbound, removedTags)
+
+		if raw, ok := rule.Options["inbound"]; ok {
+			switch value := raw.(type) {
+			case []string:
+				cleaned := filterTags(value, removedTags)
+				if len(cleaned) == 0 {
+					delete(rule.Options, "inbound")
+				} else {
+					rule.Options["inbound"] = cleaned
+				}
+			case []interface{}:
+				cleaned := make([]interface{}, 0, len(value))
+				for _, item := range value {
+					if inboundTag, ok := item.(string); !ok || inboundTag != tag {
+						cleaned = append(cleaned, item)
+					}
+				}
+				if len(cleaned) == 0 {
+					delete(rule.Options, "inbound")
+				} else {
+					rule.Options["inbound"] = cleaned
+				}
+			case string:
+				if value == tag {
+					delete(rule.Options, "inbound")
+				}
+			}
+		}
+
+		hasCondition := len(rule.RuleSet) > 0 || len(rule.Inbound) > 0 || len(rule.Options) > 0
+		if hasCondition || rule.Action == "sniff" || rule.Action == "resolve" {
+			keptRouteRules = append(keptRouteRules, rule)
+		}
+	}
+	config.RouteRules = keptRouteRules
 }
 
 // AddOutbound adds a new outbound configuration
@@ -314,12 +413,76 @@ func (s *SingBoxConfigService) DeleteOutbound(id string) error {
 
 	for i, item := range config.Outbounds {
 		if item.ID == id {
+			if references := findOutboundReferences(&config, item.Tag); len(references) > 0 {
+				return fmt.Errorf("cannot delete outbound %q: still referenced by %s", item.Tag, strings.Join(references, ", "))
+			}
 			config.Outbounds = append(config.Outbounds[:i], config.Outbounds[i+1:]...)
 			return s.SaveConfig(config)
 		}
 	}
 
 	return fmt.Errorf("outbound not found")
+}
+
+// findOutboundReferences returns the locations that still refer to an
+// outbound tag. Deletion is rejected while any of these references exist,
+// because sing-box would otherwise receive a configuration with dangling
+// outbound tags.
+func findOutboundReferences(config *models.SingBoxConfig, tag string) []string {
+	if tag == "" {
+		return nil
+	}
+
+	var references []string
+	if config.RouteConfig != nil && config.RouteConfig.Final == tag {
+		references = append(references, "route.final")
+	}
+
+	for i, rule := range config.RouteRules {
+		if rule.Outbound == tag {
+			references = append(references, fmt.Sprintf("route.rules[%d].outbound", i))
+		}
+		if value, ok := rule.Options["outbound"].(string); ok && value == tag {
+			references = append(references, fmt.Sprintf("route.rules[%d].options.outbound", i))
+		}
+	}
+
+	for i, outbound := range config.Outbounds {
+		if outbound.Options == nil {
+			continue
+		}
+		if value, ok := outbound.Options["default"].(string); ok && value == tag {
+			references = append(references, fmt.Sprintf("outbounds[%d].options.default", i))
+		}
+		if value, ok := outbound.Options["detour"].(string); ok && value == tag {
+			references = append(references, fmt.Sprintf("outbounds[%d].options.detour", i))
+		}
+		if value, ok := outbound.Options["outbounds"]; ok && containsOutboundTag(value, tag) {
+			references = append(references, fmt.Sprintf("outbounds[%d].options.outbounds", i))
+		}
+	}
+
+	return references
+}
+
+func containsOutboundTag(value interface{}, tag string) bool {
+	switch value := value.(type) {
+	case string:
+		return value == tag
+	case []string:
+		for _, item := range value {
+			if item == tag {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, item := range value {
+			if item, ok := item.(string); ok && item == tag {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // AddRuleset adds a new ruleset configuration
@@ -331,6 +494,10 @@ func (s *SingBoxConfigService) AddRuleset(ruleset models.Ruleset) (models.Rulese
 
 	if ruleset.ID == "" {
 		ruleset.ID = uuid.New().String()
+	}
+
+	if err := s.materializeRuleset(ruleset); err != nil {
+		return models.Ruleset{}, err
 	}
 
 	config.Rulesets = append(config.Rulesets, ruleset)
@@ -352,6 +519,9 @@ func (s *SingBoxConfigService) AddRulesets(rulesets []models.Ruleset) ([]models.
 	for i := range rulesets {
 		if rulesets[i].ID == "" {
 			rulesets[i].ID = uuid.New().String()
+		}
+		if err := s.materializeRuleset(rulesets[i]); err != nil {
+			return nil, err
 		}
 	}
 
@@ -377,6 +547,9 @@ func (s *SingBoxConfigService) UpdateRuleset(ruleset models.Ruleset) (models.Rul
 
 	for i, item := range config.Rulesets {
 		if item.ID == ruleset.ID {
+			if err := s.materializeRuleset(ruleset); err != nil {
+				return models.Ruleset{}, err
+			}
 			config.Rulesets[i] = ruleset
 			if err := s.SaveConfig(config); err != nil {
 				return models.Ruleset{}, err
@@ -398,7 +571,12 @@ func (s *SingBoxConfigService) DeleteRuleset(id string) error {
 	for i, item := range config.Rulesets {
 		if item.ID == id {
 			config.Rulesets = append(config.Rulesets[:i], config.Rulesets[i+1:]...)
-			return s.SaveConfig(config)
+			s.cleanupRulesetReferences(&config, map[string]bool{item.Tag: true})
+			err := s.SaveConfig(config)
+			if err == nil {
+				s.removeRulesetFile(item.Tag)
+			}
+			return err
 		}
 	}
 
@@ -417,15 +595,99 @@ func (s *SingBoxConfigService) DeleteRulesets(ids []string) error {
 		idSet[id] = true
 	}
 
+	var deleted []models.Ruleset
 	var remaining []models.Ruleset
 	for _, item := range config.Rulesets {
-		if !idSet[item.ID] {
+		if idSet[item.ID] {
+			deleted = append(deleted, item)
+		} else {
 			remaining = append(remaining, item)
 		}
 	}
 
 	config.Rulesets = remaining
-	return s.SaveConfig(config)
+	deletedTags := make(map[string]bool, len(deleted))
+	for _, item := range deleted {
+		deletedTags[item.Tag] = true
+	}
+	if len(deletedTags) > 0 {
+		s.cleanupRulesetReferences(&config, deletedTags)
+	}
+	err = s.SaveConfig(config)
+	if err == nil {
+		for _, item := range deleted {
+			s.removeRulesetFile(item.Tag)
+		}
+	}
+	return err
+}
+
+// cleanupRulesetReferences removes references to the given ruleset tags from
+// route rules and DNS rules. Rules that lose all of their match conditions
+// after the removal are dropped entirely so the generated sing-box config
+// stays valid.
+func (s *SingBoxConfigService) cleanupRulesetReferences(config *models.SingBoxConfig, tags map[string]bool) {
+	// Route rules
+	var keptRouteRules []models.RouteRule
+	for _, rule := range config.RouteRules {
+		rule.RuleSet = filterTags(rule.RuleSet, tags)
+		if raw, ok := rule.Options["rule_set"]; ok {
+			switch v := raw.(type) {
+			case []interface{}:
+				cleaned := make([]interface{}, 0, len(v))
+				for _, item := range v {
+					if s, ok := item.(string); !ok || !tags[s] {
+						cleaned = append(cleaned, item)
+					}
+				}
+				if len(cleaned) == 0 {
+					delete(rule.Options, "rule_set")
+				} else {
+					rule.Options["rule_set"] = cleaned
+				}
+			case []string:
+				cleaned := filterTags(v, tags)
+				if len(cleaned) == 0 {
+					delete(rule.Options, "rule_set")
+				} else {
+					rule.Options["rule_set"] = cleaned
+				}
+			}
+		}
+		// Keep the rule if it still has at least one match condition. A rule
+		// without any condition and a routing action (route/bypass/reject)
+		// would become a catch-all that hijacks every connection, so drop it.
+		// Processing-only actions such as sniff/resolve are valid without
+		// conditions and are always kept.
+		hasCondition := len(rule.RuleSet) > 0 || len(rule.Inbound) > 0 || len(rule.Options) > 0
+		if hasCondition || rule.Action == "sniff" || rule.Action == "resolve" {
+			keptRouteRules = append(keptRouteRules, rule)
+		}
+	}
+	config.RouteRules = keptRouteRules
+
+	// DNS rules
+	if config.DNS != nil {
+		var keptDNSRules []models.DNSRule
+		for _, rule := range config.DNS.Rules {
+			rule.RuleSet = filterTags(rule.RuleSet, tags)
+			if len(rule.RuleSet) > 0 {
+				keptDNSRules = append(keptDNSRules, rule)
+			}
+		}
+		config.DNS.Rules = keptDNSRules
+	}
+}
+
+// filterTags returns a new slice containing only the items not present in tags.
+func filterTags(items []string, tags map[string]bool) []string {
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if !tags[item] {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 // AddRouteRule adds a new route rule configuration
@@ -487,6 +749,109 @@ func (s *SingBoxConfigService) DeleteRouteRule(id string) error {
 	}
 
 	return fmt.Errorf("route rule not found")
+}
+
+// BatchUpdateRouteRules appends inbound tags without duplicates and sets the
+// outbound tag for the selected route rules. Empty values are treated as no-op
+// fields so callers can update either side independently.
+func (s *SingBoxConfigService) BatchUpdateRouteRules(ids, inbounds []string, outbound string) ([]models.RouteRule, error) {
+	config, err := s.GetConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	idSet := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			idSet[id] = struct{}{}
+		}
+	}
+	if len(idSet) == 0 {
+		return nil, fmt.Errorf("route rule IDs are required")
+	}
+
+	// Deduplicate inbound tags in the request while preserving their order.
+	uniqueInbounds := make([]string, 0, len(inbounds))
+	seenInbounds := make(map[string]struct{}, len(inbounds))
+	for _, tag := range inbounds {
+		if tag == "" {
+			continue
+		}
+		if _, ok := seenInbounds[tag]; ok {
+			continue
+		}
+		seenInbounds[tag] = struct{}{}
+		uniqueInbounds = append(uniqueInbounds, tag)
+	}
+
+	updated := make([]models.RouteRule, 0, len(idSet))
+	found := make(map[string]struct{}, len(idSet))
+	for i := range config.RouteRules {
+		rule := &config.RouteRules[i]
+		if _, ok := idSet[rule.ID]; !ok {
+			continue
+		}
+		found[rule.ID] = struct{}{}
+
+		seen := make(map[string]struct{}, len(rule.Inbound)+len(uniqueInbounds))
+		for _, tag := range rule.Inbound {
+			seen[tag] = struct{}{}
+		}
+		for _, tag := range uniqueInbounds {
+			if _, ok := seen[tag]; !ok {
+				rule.Inbound = append(rule.Inbound, tag)
+				seen[tag] = struct{}{}
+			}
+		}
+		if outbound != "" {
+			rule.Outbound = outbound
+		}
+		updated = append(updated, *rule)
+	}
+
+	if len(found) != len(idSet) {
+		return nil, fmt.Errorf("one or more route rules not found")
+	}
+	if err := s.SaveConfig(config); err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+// BatchDeleteRouteRules deletes multiple route rules in one database write.
+func (s *SingBoxConfigService) BatchDeleteRouteRules(ids []string) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("route rule IDs are required")
+	}
+
+	config, err := s.GetConfig()
+	if err != nil {
+		return err
+	}
+	idSet := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			idSet[id] = struct{}{}
+		}
+	}
+	if len(idSet) == 0 {
+		return fmt.Errorf("route rule IDs are required")
+	}
+
+	remaining := make([]models.RouteRule, 0, len(config.RouteRules))
+	found := make(map[string]struct{}, len(idSet))
+	for _, rule := range config.RouteRules {
+		if _, ok := idSet[rule.ID]; ok {
+			found[rule.ID] = struct{}{}
+			continue
+		}
+		remaining = append(remaining, rule)
+	}
+	if len(found) != len(idSet) {
+		return fmt.Errorf("one or more route rules not found")
+	}
+	config.RouteRules = remaining
+	return s.SaveConfig(config)
 }
 
 // ReorderRouteRules reorders route rules by the given ID list
@@ -730,8 +1095,12 @@ func (s *SingBoxConfigService) ExportConfig() (map[string]interface{}, error) {
 	}
 
 	// Build the sing-box config format
+	ruleSets, err := s.buildRulesets(config.Rulesets)
+	if err != nil {
+		return nil, err
+	}
 	routeSection := map[string]interface{}{
-		"rule_set": s.buildRulesets(config.Rulesets),
+		"rule_set": ruleSets,
 		"rules":    s.buildRouteRules(config.RouteRules),
 	}
 	if config.RouteConfig != nil && config.RouteConfig.Final != "" {
@@ -811,6 +1180,14 @@ func (s *SingBoxConfigService) ExportConfig() (map[string]interface{}, error) {
 		result["http_clients"] = s.buildHTTPClients(config.HTTPClients)
 	}
 
+	// Rewrite matching http(s) URLs through the accelerate domain so the
+	// kernel fetches accelerated addresses (e.g. remote rule-set URLs).
+	if accel := s.configService.Get(); accel.AccelerateDomain != "" {
+		for k, v := range result {
+			result[k] = applyAccelerateDeep(v, accel.AccelerateDomain, accel.AccelerateDomains)
+		}
+	}
+
 	return result, nil
 }
 
@@ -856,7 +1233,224 @@ func (s *SingBoxConfigService) buildOutbounds(outbounds []models.Outbound) []map
 	return result
 }
 
-func (s *SingBoxConfigService) buildRulesets(rulesets []models.Ruleset) []map[string]interface{} {
+// sanitizeTag makes a ruleset tag safe to use as a file name.
+func sanitizeTag(tag string) string {
+	var b strings.Builder
+	for _, r := range tag {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '.' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// rulesetFilePath returns the absolute path of the materialized file for a tag.
+func rulesetFilePath(tag string) (string, error) {
+	safe := sanitizeTag(tag)
+	if safe == "" {
+		return "", fmt.Errorf("invalid ruleset tag %q", tag)
+	}
+	// Store materialized rule-sets under the current user's home directory
+	// so the location does not depend on the process working directory.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get user home directory: %w", err)
+	}
+	return filepath.Join(home, ".singbox_ruleset", safe+".json"), nil
+}
+
+// materializeRuleset writes an inline ruleset's rules to a local file so that
+// sing-box's local rule-set file watcher hot-reloads it without a restart.
+func (s *SingBoxConfigService) materializeRuleset(ruleset models.Ruleset) error {
+	if ruleset.Type != "inline" || ruleset.Options == nil {
+		return nil
+	}
+	rules, ok := ruleset.Options["rules"]
+	if !ok {
+		return fmt.Errorf("inline ruleset %q has no rules", ruleset.Tag)
+	}
+	var raw []byte
+	switch v := rules.(type) {
+	case string:
+		raw = []byte(v)
+	case []interface{}:
+		b, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			return err
+		}
+		raw = b
+	default:
+		return fmt.Errorf("inline ruleset %q has unsupported rules type %T", ruleset.Tag, rules)
+	}
+	var rulesJSON []json.RawMessage
+	if err := json.Unmarshal(raw, &rulesJSON); err != nil {
+		return fmt.Errorf("inline ruleset %q rules are not a valid JSON array: %w", ruleset.Tag, err)
+	}
+	// Convert route-rule style rules into headless rules accepted by rule-sets.
+	for i, rule := range rulesJSON {
+		converted, err := convertInlineRule(rule)
+		if err != nil {
+			return fmt.Errorf("inline ruleset %q rule[%d]: %w", ruleset.Tag, i, err)
+		}
+		rulesJSON[i] = converted
+	}
+	// sing-box source format requires a "version" wrapper around the rules.
+	content, err := json.MarshalIndent(map[string]interface{}{
+		"version": 1,
+		"rules":   rulesJSON,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	path, err := rulesetFilePath(ruleset.Tag)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	// Write in place (truncate) instead of rename: inotify watches the inode,
+	// so an atomic rename would silently break the file watcher.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(content); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
+// removeRulesetFile deletes the materialized file of a ruleset tag.
+func (s *SingBoxConfigService) removeRulesetFile(tag string) {
+	path, err := rulesetFilePath(tag)
+	if err != nil {
+		return
+	}
+	_ = os.Remove(path)
+}
+
+// GetAccelerateURL applies the accelerate domain to a URL.
+// Returns accelerateDomain + "/" + rawURL, or the original URL if
+// accelerateDomain is empty.
+func GetAccelerateURL(rawURL, accelerateDomain string) string {
+	if accelerateDomain == "" {
+		return rawURL
+	}
+	domain := accelerateDomain
+	if len(domain) > 0 && domain[len(domain)-1] == '/' {
+		domain = domain[:len(domain)-1]
+	}
+	return domain + "/" + rawURL
+}
+
+// ShouldAccelerate checks if the URL's host matches any of the configured
+// accelerate domains. Empty list accelerates all URLs (legacy behavior).
+func ShouldAccelerate(rawURL string, accelerateDomains []string) bool {
+	if len(accelerateDomains) == 0 {
+		return false
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	for _, pattern := range accelerateDomains {
+		p := strings.ToLower(strings.TrimSpace(pattern))
+		if p == "" {
+			continue
+		}
+		// exact match or subdomain match (e.g. "github.com" matches
+		// "raw.githubusercontent.com")
+		if host == p || strings.HasSuffix(host, "."+p) {
+			return true
+		}
+	}
+	return false
+}
+
+// applyAccelerateDeep walks the exported config and rewrites any http(s) URL
+// whose host matches the accelerate domains to go through the accelerate
+// domain, so the kernel receives accelerated addresses.
+func applyAccelerateDeep(v interface{}, domain string, domains []string) interface{} {
+	switch val := v.(type) {
+	case string:
+		if domain != "" && isHTTPURL(val) && ShouldAccelerate(val, domains) {
+			return GetAccelerateURL(val, domain)
+		}
+		return val
+	case map[string]interface{}:
+		for k, sub := range val {
+			val[k] = applyAccelerateDeep(sub, domain, domains)
+		}
+		return val
+	case []interface{}:
+		for i, sub := range val {
+			val[i] = applyAccelerateDeep(sub, domain, domains)
+		}
+		return val
+	case []map[string]interface{}:
+		for i, sub := range val {
+			val[i] = applyAccelerateDeep(sub, domain, domains).(map[string]interface{})
+		}
+		return val
+	default:
+		return v
+	}
+}
+
+func isHTTPURL(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
+
+// convertInlineRule converts a route-rule style rule ("type" being a condition
+// class, e.g. domain_suffix) into a headless rule accepted inside a rule-set
+// (type "default"/"logical" only). Condition fields are preserved as-is.
+func convertInlineRule(raw json.RawMessage) (json.RawMessage, error) {
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	ruleType, _ := m["type"].(string)
+	switch ruleType {
+	case "", "default":
+		// Already headless-compatible; keep as-is.
+		return raw, nil
+	case "logical":
+		// Recurse into nested rules.
+		subRules, ok := m["rules"].([]interface{})
+		if !ok {
+			return raw, nil
+		}
+		for i, sub := range subRules {
+			subRaw, err := json.Marshal(sub)
+			if err != nil {
+				return nil, err
+			}
+			converted, err := convertInlineRule(subRaw)
+			if err != nil {
+				return nil, err
+			}
+			subRules[i] = json.RawMessage(converted)
+		}
+		m["rules"] = subRules
+		return json.Marshal(m)
+	default:
+		// Route-rule style: strip the condition type and action-related
+		// fields, keeping the condition fields only.
+		delete(m, "type")
+		for _, k := range []string{"outbound", "action", "server", "inbound", "internal", "router", "rule_set", "rules", "mode"} {
+			delete(m, k)
+		}
+		if len(m) == 0 {
+			return nil, fmt.Errorf("rule has no conditions")
+		}
+		return json.Marshal(m)
+	}
+}
+
+func (s *SingBoxConfigService) buildRulesets(rulesets []models.Ruleset) ([]map[string]interface{}, error) {
 	var result []map[string]interface{}
 	for _, ruleset := range rulesets {
 		if !ruleset.Enabled {
@@ -889,15 +1483,23 @@ func (s *SingBoxConfigService) buildRulesets(rulesets []models.Ruleset) []map[st
 				item["format"] = v
 			}
 		case "inline":
-			// Inline: rules are stored directly in config
-			if v, ok := ruleset.Options["rules"]; ok {
-				item["rules"] = v
+			// Materialize inline rules to a local file and reference it as a
+			// local rule-set, so editing the rules hot-reloads without restart.
+			if err := s.materializeRuleset(ruleset); err != nil {
+				return nil, fmt.Errorf("materialize inline ruleset %q: %w", ruleset.Tag, err)
 			}
+			path, err := rulesetFilePath(ruleset.Tag)
+			if err != nil {
+				return nil, fmt.Errorf("compute file path for ruleset %q: %w", ruleset.Tag, err)
+			}
+			item["type"] = "local"
+			item["path"] = path
+			item["format"] = "source"
 		}
 
 		result = append(result, item)
 	}
-	return result
+	return result, nil
 }
 
 func contains(arr []string, s string) bool {
@@ -1123,7 +1725,7 @@ func (s *SingBoxConfigService) ImportVMess(link string) (models.Outbound, error)
 	path, _ := vmessInfo["path"].(string)
 	tls, _ := vmessInfo["tls"].(string)
 	sni, _ := vmessInfo["sni"].(string)
-Remarks, _ := vmessInfo["ps"].(string)
+	Remarks, _ := vmessInfo["ps"].(string)
 
 	if server == "" || port == 0 || userID == "" {
 		return models.Outbound{}, fmt.Errorf("missing required vmess fields (server, port, id)")
@@ -1137,9 +1739,9 @@ Remarks, _ := vmessInfo["ps"].(string)
 
 	// Build options
 	options := map[string]interface{}{
-		"server":     server,
+		"server":      server,
 		"server_port": port,
-		"uuid":       userID,
+		"uuid":        userID,
 	}
 
 	if aid > 0 {
@@ -1163,7 +1765,7 @@ Remarks, _ := vmessInfo["ps"].(string)
 	// TLS
 	if tls == "tls" {
 		options["tls"] = map[string]interface{}{
-			"enabled": true,
+			"enabled":     true,
 			"server_name": sni,
 		}
 	}

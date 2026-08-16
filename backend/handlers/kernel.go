@@ -33,3 +33,12 @@ func (h *KernelHandler) GetSystemInfo(c *gin.Context) {
 		"data":    info,
 	})
 }
+
+// GetMonitor returns Go runtime performance metrics
+func (h *KernelHandler) GetMonitor(c *gin.Context) {
+	stats := h.service.GetMonitorStats()
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    stats,
+	})
+}

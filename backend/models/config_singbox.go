@@ -2,22 +2,22 @@ package models
 
 // Inbound represents a sing-box inbound configuration
 type Inbound struct {
-	ID          string                 `json:"id"`
-	Type        string                 `json:"type"` // "http", "socks", "tun", "shadowsocks", etc.
-	Tag         string                 `json:"tag"`
-	Listen      string                 `json:"listen,omitempty"`
-	ListenPort  int                    `json:"listenPort"`
-	Options     map[string]interface{} `json:"options,omitempty"`
-	Enabled     bool                   `json:"enabled"`
+	ID         string                 `json:"id"`
+	Type       string                 `json:"type"` // "http", "socks", "tun", "shadowsocks", etc.
+	Tag        string                 `json:"tag"`
+	Listen     string                 `json:"listen,omitempty"`
+	ListenPort int                    `json:"listenPort"`
+	Options    map[string]interface{} `json:"options,omitempty"`
+	Enabled    bool                   `json:"enabled"`
 }
 
 // Outbound represents a sing-box outbound configuration
 type Outbound struct {
-	ID          string                 `json:"id"`
-	Type        string                 `json:"type"` // "direct", "block", "selector", "urltest", "shadowsocks", "vmess", etc.
-	Tag         string                 `json:"tag"`
-	Options     map[string]interface{} `json:"options,omitempty"`
-	Enabled     bool                   `json:"enabled"`
+	ID      string                 `json:"id"`
+	Type    string                 `json:"type"` // "direct", "block", "selector", "urltest", "shadowsocks", "vmess", etc.
+	Tag     string                 `json:"tag"`
+	Options map[string]interface{} `json:"options,omitempty"`
+	Enabled bool                   `json:"enabled"`
 }
 
 // Ruleset represents a sing-box ruleset configuration
@@ -72,7 +72,7 @@ type DNSConfig struct {
 
 // RouteConfig represents the sing-box route configuration
 type RouteConfig struct {
-	Final            string `json:"final"`             // tag of default outbound
+	Final             string `json:"final"`               // tag of default outbound
 	DefaultHttpClient string `json:"default_http_client"` // tag of default HTTP client
 }
 
@@ -103,12 +103,12 @@ type CacheFileConfig struct {
 
 // ClashAPIConfig represents the clash_api experimental configuration
 type ClashAPIConfig struct {
-	ExternalController            string   `json:"external_controller,omitempty"`
-	ExternalUI                    string   `json:"external_ui,omitempty"`
-	ExternalUIDownloadURL         string   `json:"external_ui_download_url,omitempty"`
-	ExternalUIDownloadDetour      string   `json:"external_ui_download_detour,omitempty"`
-	AccessControlAllowOrigin      []string `json:"access_control_allow_origin,omitempty"`
-	AccessControlAllowPrivateNetwork *bool `json:"access_control_allow_private_network,omitempty"`
+	ExternalController               string   `json:"external_controller,omitempty"`
+	ExternalUI                       string   `json:"external_ui,omitempty"`
+	ExternalUIDownloadURL            string   `json:"external_ui_download_url,omitempty"`
+	ExternalUIDownloadDetour         string   `json:"external_ui_download_detour,omitempty"`
+	AccessControlAllowOrigin         []string `json:"access_control_allow_origin,omitempty"`
+	AccessControlAllowPrivateNetwork *bool    `json:"access_control_allow_private_network,omitempty"`
 }
 
 // ExperimentalConfig represents the experimental configuration
@@ -119,14 +119,14 @@ type ExperimentalConfig struct {
 
 // SingBoxConfig represents the full sing-box configuration
 type SingBoxConfig struct {
-	Inbounds     []Inbound          `json:"inbounds"`
-	Outbounds    []Outbound         `json:"outbounds"`
-	Rulesets     []Ruleset          `json:"rulesets"`
-	RouteConfig  *RouteConfig       `json:"route_config"`
-	RouteRules   []RouteRule        `json:"route_rules"`
-	DNS          *DNSConfig         `json:"dns"`
-	Services     []Service          `json:"services"`
-	HTTPClients  []HTTPClient       `json:"http_clients"`
+	Inbounds     []Inbound           `json:"inbounds"`
+	Outbounds    []Outbound          `json:"outbounds"`
+	Rulesets     []Ruleset           `json:"rulesets"`
+	RouteConfig  *RouteConfig        `json:"route_config"`
+	RouteRules   []RouteRule         `json:"route_rules"`
+	DNS          *DNSConfig          `json:"dns"`
+	Services     []Service           `json:"services"`
+	HTTPClients  []HTTPClient        `json:"http_clients"`
 	Experimental *ExperimentalConfig `json:"experimental,omitempty"`
 }
 
@@ -151,6 +151,6 @@ type OutboundRequest struct {
 
 // RulesetRequest represents a ruleset CRUD request
 type RulesetRequest struct {
-	Action string   `json:"action"` // "add", "update", "delete"
-	Data   Ruleset  `json:"data"`
+	Action string  `json:"action"` // "add", "update", "delete"
+	Data   Ruleset `json:"data"`
 }

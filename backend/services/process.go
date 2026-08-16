@@ -1,9 +1,11 @@
 package services
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"sing_panel/models"
@@ -14,6 +16,8 @@ type ProcessService struct {
 	configService *SingBoxConfigService
 	kernelService *KernelService
 	statsService  *StatsService
+	mu            sync.RWMutex
+	runtimeConfig json.RawMessage
 }
 
 func NewProcessService(db *Database, configService *SingBoxConfigService, kernelService *KernelService, statsService *StatsService) *ProcessService {
@@ -25,23 +29,32 @@ func NewProcessService(db *Database, configService *SingBoxConfigService, kernel
 	}
 }
 
+// GetRuntimeConfig returns the exact config JSON that was passed to the
+// embedded kernel at startup, together with whether the kernel is running.
+func (s *ProcessService) GetRuntimeConfig() (json.RawMessage, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !GetBoxService().IsRunning() || s.runtimeConfig == nil {
+		return nil, false
+	}
+	return bytes.Clone(s.runtimeConfig), true
+}
+
 // GetStatus returns the current process status
 func (s *ProcessService) GetStatus() models.ProcessStatus {
-	state, err := s.kernelService.loadState()
-	if err != nil || !state.Installed {
-		return models.ProcessStatus{
-			Running: false,
-			Status:  "not_installed",
-		}
-	}
-
-	// Check embedded service
+	// The kernel is embedded into the binary, so it is always available.
+	// Only the running state of the embedded sing-box instance matters.
 	boxService := GetBoxService()
 	if boxService.IsRunning() {
+		state, _ := s.kernelService.loadState()
+		version := state.Version
+		if version == "" {
+			version = singBoxVersion()
+		}
 		return models.ProcessStatus{
 			Running:   true,
 			Status:    "running",
-			Version:   state.Version,
+			Version:   version,
 			StartTime: state.StartTime,
 		}
 	}
@@ -60,12 +73,6 @@ func (s *ProcessService) Start() error {
 		return fmt.Errorf("already running")
 	}
 
-	// Check if installed
-	state, err := s.kernelService.loadState()
-	if err != nil || !state.Installed {
-		return fmt.Errorf("kernel not installed")
-	}
-
 	// Clear old PID if process is not running
 	s.kernelService.clearPID()
 
@@ -75,6 +82,9 @@ func (s *ProcessService) Start() error {
 		return fmt.Errorf("failed to generate config: %w", err)
 	}
 
+	s.mu.Lock()
+	s.runtimeConfig = configJSON
+	s.mu.Unlock()
 	// Start embedded sing-box
 	boxService := GetBoxService()
 	if err := boxService.Start(configJSON); err != nil {
@@ -106,6 +116,9 @@ func (s *ProcessService) Stop() error {
 
 	s.kernelService.clearPID()
 	slog.Info("sing-box embedded stopped")
+	s.mu.Lock()
+	s.runtimeConfig = nil
+	s.mu.Unlock()
 	return nil
 }
 
@@ -132,5 +145,3 @@ func (s *ProcessService) generateConfigJSON() ([]byte, error) {
 
 	return json.MarshalIndent(config, "", "  ")
 }
-
-

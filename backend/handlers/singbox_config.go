@@ -3,6 +3,7 @@ package handlers
 import (
 	"net"
 	"net/http"
+	"strings"
 
 	"sing_panel/models"
 	"sing_panel/services"
@@ -211,7 +212,11 @@ func (h *SingBoxConfigHandler) DeleteOutbound(c *gin.Context) {
 	}
 
 	if err := h.service.DeleteOutbound(id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		status := http.StatusInternalServerError
+		if strings.HasPrefix(err.Error(), "cannot delete outbound") {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -538,6 +543,44 @@ func (h *SingBoxConfigHandler) DeleteRouteRule(c *gin.Context) {
 		"success": true,
 		"message": "Route rule deleted",
 	})
+}
+
+// BatchUpdateRouteRules updates inbound and outbound references for multiple
+// route rules in one operation.
+func (h *SingBoxConfigHandler) BatchUpdateRouteRules(c *gin.Context) {
+	var req struct {
+		IDs      []string `json:"ids" binding:"required,min=1"`
+		Inbounds []string `json:"inbounds"`
+		Outbound string   `json:"outbound"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	updated, err := h.service.BatchUpdateRouteRules(req.IDs, req.Inbounds, req.Outbound)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": updated})
+}
+
+// BatchDeleteRouteRules deletes multiple route rules in one operation.
+func (h *SingBoxConfigHandler) BatchDeleteRouteRules(c *gin.Context) {
+	var req struct {
+		IDs []string `json:"ids" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	if err := h.service.BatchDeleteRouteRules(req.IDs); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Route rules deleted"})
 }
 
 // ReorderRouteRules reorders route rules

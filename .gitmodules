@@ -1,3 +1,0 @@
-[submodule "vendor/sing-box"]
-	path = vendor/sing-box
-	url = https://github.com/SagerNet/sing-box.git

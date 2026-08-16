@@ -249,18 +249,45 @@
           <el-divider content-position="left">出站选择</el-divider>
 
           <el-form-item label="出站列表">
-            <el-select v-model="form.options.outbounds" multiple filterable placeholder="选择出站">
-              <el-option
-                v-for="ob in availableOutbounds"
-                :key="ob.tag"
-                :label="ob.tag"
-                :value="ob.tag"
-              />
-            </el-select>
-            <div class="form-tip">可拖拽排序，已选中的出站将显示在此列表</div>
+            <div class="outbound-list-container">
+              <div class="selected-outbounds" v-if="form.options.outbounds && form.options.outbounds.length > 0">
+                <div 
+                  v-for="(tag, index) in form.options.outbounds" 
+                  :key="tag"
+                  class="outbound-item"
+                  draggable="true"
+                  @dragstart="onDragStart(index)"
+                  @dragover.prevent="onDragOver(index)"
+                  @drop="onDrop(index)"
+                  @dragend="onDragEnd"
+                  :class="{ 'dragging': dragIndex === index }"
+                >
+                  <span class="drag-handle">⋮⋮</span>
+                  <span class="outbound-tag">{{ tag }}</span>
+                  <el-button type="danger" link size="small" @click="removeOutbound(index)">
+                    <el-icon><Close /></el-icon>
+                  </el-button>
+                </div>
+              </div>
+              <div v-else class="empty-outbounds">暂无出站，请添加</div>
+              <el-select 
+                v-model="addOutboundValue" 
+                placeholder="添加出站" 
+                @change="addOutbound"
+                style="width: 100%; margin-top: 8px;"
+                clearable
+              >
+                <el-option
+                  v-for="ob in availableOutboundsToAdd"
+                  :key="ob.tag"
+                  :label="ob.tag"
+                  :value="ob.tag"
+                />
+              </el-select>
+            </div>
           </el-form-item>
 
-          <el-form-item v-if="form.type === 'urltest'" label="默认出站">
+          <el-form-item v-if="form.type === 'selector' || form.type === 'urltest'" label="默认出站">
             <el-select v-model="form.options.default" clearable placeholder="留空使用第一个">
               <el-option
                 v-for="tag in form.options.outbounds"
@@ -347,7 +374,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { singboxApi } from '../../api/singbox'
-import { Download, Plus, Upload } from '@element-plus/icons-vue'
+import { Download, Plus, Upload, Close } from '@element-plus/icons-vue'
 
 const outbounds = ref([])
 const loading = ref(false)
@@ -374,6 +401,15 @@ const form = ref({
   options: {}
 })
 
+// Watch for outbounds list changes to sync default outbound
+watch(() => form.value.options.outbounds, (newOutbounds, oldOutbounds) => {
+  if (!newOutbounds || !form.value.options.default) return
+  // If the default outbound is no longer in the list, clear it
+  if (!newOutbounds.includes(form.value.options.default)) {
+    form.value.options.default = ''
+  }
+}, { deep: true })
+
 // Available outbounds for selector/urltest (exclude current editing outbound)
 const availableOutbounds = computed(() => {
   return outbounds.value.filter(ob => {
@@ -381,6 +417,62 @@ const availableOutbounds = computed(() => {
     return true
   })
 })
+
+// Available outbounds to add (exclude current editing outbound and already selected)
+const availableOutboundsToAdd = computed(() => {
+  const selected = form.value.options.outbounds || []
+  return availableOutbounds.value.filter(ob => !selected.includes(ob.tag))
+})
+
+// Drag and drop state
+const dragIndex = ref(null)
+const dragOverIndex = ref(null)
+
+// Drag and drop handlers
+const onDragStart = (index) => {
+  dragIndex.value = index
+}
+
+const onDragOver = (index) => {
+  dragOverIndex.value = index
+}
+
+const onDrop = (index) => {
+  if (dragIndex.value === null || dragIndex.value === index) return
+  
+  const outbounds = [...(form.value.options.outbounds || [])]
+  const draggedItem = outbounds.splice(dragIndex.value, 1)[0]
+  outbounds.splice(index, 0, draggedItem)
+  form.value.options.outbounds = outbounds
+  
+  dragIndex.value = null
+  dragOverIndex.value = null
+}
+
+const onDragEnd = () => {
+  dragIndex.value = null
+  dragOverIndex.value = null
+}
+
+// Add outbound to list
+const addOutboundValue = ref('')
+const addOutbound = (tag) => {
+  if (!tag) return
+  if (!form.value.options.outbounds) {
+    form.value.options.outbounds = []
+  }
+  if (!form.value.options.outbounds.includes(tag)) {
+    form.value.options.outbounds.push(tag)
+  }
+  addOutboundValue.value = ''
+}
+
+// Remove outbound from list
+const removeOutbound = (index) => {
+  if (form.value.options.outbounds) {
+    form.value.options.outbounds.splice(index, 1)
+  }
+}
 
 const rules = {
   type: [{ required: true, message: '请选择类型', trigger: 'change' }],
@@ -621,7 +713,12 @@ const deleteOutbound = async (outbound) => {
     loadOutbounds()
   } catch (err) {
     if (err !== 'cancel') {
-      ElMessage.error('删除失败')
+      const message = err.response?.data?.error || ''
+      if (message.includes('used') || message.includes('引用') || message.includes('route')) {
+        ElMessage.error('该出站已被路由规则使用，请先移除引用')
+      } else {
+        ElMessage.error('删除失败: ' + (message || err.message || '未知错误'))
+      }
     }
   }
 }
@@ -814,5 +911,62 @@ onMounted(() => {
 .import-alert p {
   margin: 4px 0;
   font-size: 12px;
+}
+
+.outbound-list-container {
+  width: 100%;
+}
+
+.selected-outbounds {
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  padding: 8px;
+  min-height: 40px;
+  background: var(--el-fill-color-lighter);
+}
+
+.empty-outbounds {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  padding: 12px;
+  text-align: center;
+}
+
+.outbound-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  margin-bottom: 4px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  cursor: move;
+  transition: all 0.2s;
+}
+
+.outbound-item:last-child {
+  margin-bottom: 0;
+}
+
+.outbound-item:hover {
+  border-color: var(--el-color-primary);
+}
+
+.outbound-item.dragging {
+  opacity: 0.5;
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.drag-handle {
+  color: var(--el-text-color-secondary);
+  margin-right: 8px;
+  cursor: move;
+  user-select: none;
+}
+
+.outbound-tag {
+  flex: 1;
+  font-size: 14px;
 }
 </style>

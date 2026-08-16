@@ -9,6 +9,9 @@ export const processApi = {
   getStatus() {
     return api.get('/status')
   },
+  getRuntimeConfig() {
+    return api.get('/config')
+  },
   start() {
     return api.post('/start')
   },

@@ -8,6 +8,15 @@
           <el-icon><RefreshRight /></el-icon>
           刷新
         </el-button>
+        <el-button type="primary" link size="small" @click="exportDatabase">
+          <el-icon><Download /></el-icon>
+          导出
+        </el-button>
+        <el-button type="warning" link size="small" @click="triggerImport">
+          <el-icon><Upload /></el-icon>
+          导入
+        </el-button>
+        <input ref="importFileRef" type="file" accept=".json,application/json" style="display: none" @change="onImportFile" />
       </div>
     </template>
 
@@ -27,6 +36,17 @@
               <el-icon v-if="data.isBucket"><Folder /></el-icon>
               <el-icon v-else><Document /></el-icon>
               <span>{{ node.label }}</span>
+              <el-button
+                v-if="data.isBucket"
+                class="bucket-delete"
+                type="danger"
+                link
+                size="small"
+                @click.stop="deleteBucket(data)"
+                title="删除空目录"
+              >
+                <el-icon><Delete /></el-icon>
+              </el-button>
             </span>
           </template>
         </el-tree>
@@ -65,7 +85,7 @@ import { foldGutter, syntaxHighlighting, defaultHighlightStyle } from '@codemirr
 import { json } from '@codemirror/lang-json'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { defaultKeymap, indentWithTab } from '@codemirror/commands'
-import { Coin, RefreshRight, Delete, Check, Folder, Document } from '@element-plus/icons-vue'
+import { Coin, RefreshRight, Delete, Check, Folder, Document, Download, Upload } from '@element-plus/icons-vue'
 
 const { isDark } = useTheme()
 
@@ -80,6 +100,21 @@ const savingValue = ref(false)
 const editorRef = ref(null)
 let editorView = null
 const dbApi = axios.create({ baseURL: '/api/db', timeout: 10000 })
+const localApi = axios.create({ baseURL: '/api/instances', timeout: 10000 })
+
+// When the panel has a sync token configured, the export/import endpoints
+// require it via the X-Sync-Token header.
+const attachSyncToken = async () => {
+  try {
+    const res = await localApi.get('/local-info')
+    const token = res.data?.data?.syncToken
+    if (token) {
+      dbApi.defaults.headers.common['X-Sync-Token'] = token
+    }
+  } catch {
+    // ignore: token protection stays as configured on the server side
+  }
+}
 
 const initEditor = () => {
   if (editorView) {
@@ -214,7 +249,87 @@ const deleteCurrentKey = async () => {
   }
 }
 
+const deleteBucket = async (data) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除目录 "${data.label}" 吗？\n仅允许删除空目录（不含任何 key）。`,
+      '确认删除目录',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+    await dbApi.delete('/bucket', { params: { bucket: data.label } })
+    ElMessage.success('目录已删除')
+    if (selectedBucket.value === data.label) {
+      selectedBucket.value = ''
+      selectedKey.value = ''
+      valueContent.value = ''
+      destroyEditor()
+    }
+    loadBuckets()
+  } catch (err) {
+    if (err !== 'cancel') ElMessage.error('删除失败: ' + (err.response?.data?.error || err.message || ''))
+  }
+}
+
+const importFileRef = ref(null)
+
+const exportDatabase = async () => {
+  try {
+    const res = await dbApi.get('/export')
+    if (!res.data.success) throw new Error(res.data.error || '导出失败')
+    const blob = new Blob([JSON.stringify(res.data.data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    a.href = url
+    a.download = `sing-panel-db-${ts}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('导出成功')
+  } catch (err) {
+    ElMessage.error('导出失败: ' + (err.message || ''))
+  }
+}
+
+const triggerImport = () => {
+  importFileRef.value?.click()
+}
+
+const onImportFile = async (e) => {
+  const file = e.target.files?.[0]
+  if (!file) return
+  try {
+    const text = await file.text()
+    let parsed
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      ElMessage.error('导入文件不是有效的 JSON')
+      return
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      ElMessage.error('导入文件格式不正确：应为 { bucket: { key: value } } 结构')
+      return
+    }
+    await ElMessageBox.confirm(
+      '导入将替换数据库中全部配置数据（本机运行状态、多实例管理数据除外），正在运行的配置会立即变更。确定继续？',
+      '危险操作确认',
+      { confirmButtonText: '确认导入', cancelButtonText: '取消', type: 'warning' }
+    )
+    await dbApi.post('/import', { data: parsed })
+    ElMessage.success('导入成功')
+    selectedKey.value = ''
+    valueContent.value = ''
+    destroyEditor()
+    loadBuckets()
+  } catch (err) {
+    if (err !== 'cancel') ElMessage.error('导入失败: ' + (err.response?.data?.error || err.message || ''))
+  } finally {
+    e.target.value = ''
+  }
+}
+
 onMounted(() => {
+  attachSyncToken()
   loadBuckets()
 })
 </script>
@@ -252,6 +367,17 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 13px;
+}
+
+.tree-node .bucket-delete {
+  margin-left: auto;
+  padding: 0 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.tree-node:hover .bucket-delete {
+  opacity: 1;
 }
 
 .section-label {

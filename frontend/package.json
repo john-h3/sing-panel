@@ -15,12 +15,14 @@
     "axios": "^1.6.8",
     "chart.js": "^4.5.1",
     "codemirror": "^6.0.2",
+    "diff": "^9.0.0",
     "element-plus": "^2.7.2",
     "vue": "^3.4.21",
     "vue-router": "^4.3.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.4",
-    "vite": "^5.2.0"
+    "vite": "^5.2.0",
+    "vite-plugin-compression2": "^2.5.3"
   }
 }

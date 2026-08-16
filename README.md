@@ -4,15 +4,16 @@
 
 ## 功能
 
-- 下载 Sing Box 内核（支持 latest、stable 和自定义链接）
-- 查看可用版本列表
-- 安装指定版本
-- 删除已安装的内核
-- 实时下载进度显示
+- 嵌入 sing-box 内核（libbox），开箱即用，无需单独下载内核
+- 完整的 sing-box 配置管理（Inbound / Outbound / Ruleset / 路由规则 / DNS / 服务 / HTTP 客户端 / Experimental）
+- 支持从订阅链接导入配置、GitHub GEO 规则树自动刷新
+- 实时状态监控（内存 / 协程 / GC / 运行时长）
+- 数据库导出 / 导入
+- **多实例管理**：在单个面板上管理多个面板实例，基于导出/导入实现配置同步，实时对比各实例配置是否一致
 
 ## 技术栈
 
-- **后端**: Go + Gin
+- **后端**: Go + Gin + bbolt
 - **前端**: Vue 3 + Vite + Element Plus
 
 ## 快速开始
@@ -40,21 +41,73 @@ npm run dev
 ```bash
 chmod +x build.sh
 ./build.sh
-./sing-panel
+./build/sing-panel
 ```
 
-访问 http://localhost:8080
+### 启动脚本
+
+根目录提供了 `start.sh`（开发环境用），自动选择 `build/` 下当前平台的编译产物并启动：
+
+```bash
+./start.sh                    # 默认监听 :8080，数据目录 ./data
+./start.sh --listen :3000     # 指定端口
+./start.sh --data-dir /etc/sing-panel   # 指定数据目录
+./start.sh install            # 安装为系统服务（参数透传给二进制）
+```
+
+- 数据目录（存放 `sing-panel.db`）默认为项目根目录下 `data/`，可通过 `--data-dir` 指定
+- 安装为系统服务时，`--data-dir` 与 `--listen` 会写入服务文件
+
+### 手动启动
+
+```bash
+cd backend && go run . --data-dir ./data   # 开发模式
+```
+
+## 多实例管理
+
+在「系统设置 → 多实例管理」页面：
+
+1. **添加实例**：填写远端面板的地址（可选同步令牌），即可将其纳入管理
+2. **一致性检测**：点击「全部检查」，面板会拉取远端导出的配置并计算指纹，与本机对比，标记每个实例为「一致 / 不一致 / 不可达」
+3. **配置同步**：
+   - **推送**：将本机配置同步到指定实例
+   - **拉取**：用远端实例配置覆盖本机配置
+   - **推送全部**：将本机配置同步到所有实例
+4. **同步令牌**（可选）：面板可设置一个令牌，设置后其他面板访问导出/导入/面板信息接口必须携带该令牌（`X-Sync-Token` 头），令牌存于本机状态中，不会被配置同步覆盖
+
+一致性判断基于导出的配置数据：`config` 与 `singbox` 两个 bucket（排除 GEO 规则树缓存）；各面板本机的运行状态、managed instances、同步令牌不参与比对。
 
 ## API 接口
 
 | 方法 | 路径 | 描述 |
 |------|------|------|
+| GET | /api/panel/info | 本面板基本信息（供实例管理使用） |
 | GET | /api/kernel/status | 获取当前内核状态 |
-| GET | /api/kernel/versions | 获取可用版本列表 |
-| POST | /api/kernel/download | 下载内核 |
-| POST | /api/kernel/stop | 停止下载 |
-| DELETE | /api/kernel | 删除内核 |
-| POST | /api/kernel/switch | 切换版本 |
+| GET | /api/kernel/system | 获取系统信息 |
+| GET | /api/kernel/monitor | 获取运行时监控数据 |
+| GET/PUT | /api/config | 读取/更新面板配置 |
+| GET/PUT | /api/singbox | 读取/保存 sing-box 配置 |
+| GET/POST/PUT/DELETE | /api/singbox/inbounds | Inbound 配置管理 |
+| GET/POST/PUT/DELETE | /api/singbox/outbounds | Outbound 配置管理 |
+| GET/POST/PUT/DELETE | /api/singbox/rulesets | Ruleset 配置管理 |
+| GET/POST/PUT/DELETE | /api/singbox/route-rules | 路由规则管理 |
+| GET/PUT | /api/singbox/route-config | 路由配置管理 |
+| GET/PUT | /api/singbox/dns | DNS 配置管理 |
+| GET/POST/PUT/DELETE | /api/singbox/services | 服务管理 |
+| GET/POST/PUT/DELETE | /api/singbox/http-clients | HTTP 客户端管理 |
+| GET/PUT | /api/singbox/experimental | Experimental 配置 |
+| POST | /api/singbox/import | 从订阅链接导入配置 |
+| GET/POST | /api/process/... | sing-box 进程控制（start/stop/restart/status） |
+| GET | /api/stats/service | 服务统计信息 |
+| GET/POST/PUT/DELETE | /api/instances | 多实例管理（增删改查） |
+| GET | /api/instances/status | 检查全部实例状态与配置一致性 |
+| POST | /api/instances/:id/sync | 同步配置（push / pull） |
+| POST | /api/instances/sync-all | 推送本机配置到全部实例 |
+| PUT | /api/instances/sync-token | 设置同步令牌 |
+| GET | /api/instances/local-info | 本机面板信息与配置指纹 |
+| GET | /api/db/export | 导出数据库（受同步令牌保护） |
+| POST | /api/db/import | 导入数据库（受同步令牌保护） |
 
 ## 项目结构
 
@@ -73,3 +126,5 @@ sing_panel/
 │   └── package.json
 └── build.sh          # 构建脚本
 ```
+
+> sing-box 内核以 Go 模块依赖引入（`backend/go.mod` 中 require），源码可在模块缓存中查看：`$(go env GOMODCACHE)/github.com/sagernet/sing-box@v1.14.0-beta.15/`。如需修改内核，请 fork 后在 go.mod 中 replace 到自己的 fork。

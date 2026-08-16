@@ -75,6 +75,12 @@ export const singboxApi = {
   deleteRouteRule(id) {
     return api.delete(`/route-rules/${id}`)
   },
+  batchUpdateRouteRules(data) {
+    return api.post('/route-rules/batch-update', data)
+  },
+  batchDeleteRouteRules(ids) {
+    return api.post('/route-rules/batch-delete', { ids })
+  },
   reorderRouteRules(ids) {
     return api.post('/route-rules/reorder', { ids })
   },

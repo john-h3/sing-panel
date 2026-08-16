@@ -14,11 +14,42 @@ import (
 )
 
 var (
-	bucketConfig   = []byte("config")
-	bucketVersions = []byte("versions")
-	bucketState    = []byte("state")
-	bucketSingbox  = []byte("singbox")
+	bucketConfig    = []byte("config")
+	bucketState     = []byte("state")
+	bucketSingbox   = []byte("singbox")
+	bucketInstances = []byte("instances")
 )
+
+// preservedBuckets are never replaced by ImportAll: they hold machine-local
+// runtime state (state) and this panel's own managed instances (instances).
+var preservedBuckets = map[string]bool{
+	"state":     true,
+	"instances": true,
+}
+
+// The app_config key in the config bucket. Its dashboards field holds
+// machine-local service URLs (e.g. "http://<this-host>:9090/ui"), so it is
+// excluded from syncing and from the configuration fingerprint: every panel
+// keeps its own dashboards setting.
+const (
+	appConfigKey             = "app_config"
+	appConfigDashboardsField = "dashboards"
+)
+
+// stripAppConfigDashboards removes the dashboards field from a serialized
+// app_config value, leaving all other fields untouched.
+func stripAppConfigDashboards(raw string) string {
+	var conf map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &conf); err != nil {
+		return raw
+	}
+	delete(conf, appConfigDashboardsField)
+	out, err := json.Marshal(conf)
+	if err != nil {
+		return raw
+	}
+	return string(out)
+}
 
 type Database struct {
 	db *bolt.DB
@@ -38,7 +69,7 @@ func NewDatabase(path string) (*Database, error) {
 
 	// Create buckets
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketConfig, bucketVersions, bucketState, bucketSingbox} {
+		for _, b := range [][]byte{bucketConfig, bucketState, bucketSingbox, bucketInstances} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -55,6 +86,15 @@ func NewDatabase(path string) (*Database, error) {
 
 func (d *Database) Close() error {
 	return d.db.Close()
+}
+
+// Close returns the database file size in bytes
+func (d *Database) DBFileSize() int64 {
+	info, err := os.Stat(d.db.Path())
+	if err != nil {
+		return 0
+	}
+	return info.Size()
 }
 
 // Get retrieves a value by bucket and key
@@ -95,6 +135,21 @@ func (d *Database) Delete(bucket, key string) error {
 			return fmt.Errorf("bucket %q not found", bucket)
 		}
 		return b.Delete([]byte(key))
+	})
+}
+
+// DeleteBucket removes a bucket. Only empty buckets can be deleted, so that
+// functional data is protected from accidental removal.
+func (d *Database) DeleteBucket(bucket string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		if b == nil {
+			return fmt.Errorf("bucket %q not found", bucket)
+		}
+		if k, _ := b.Cursor().First(); k != nil {
+			return fmt.Errorf("bucket %q is not empty, delete keys first", bucket)
+		}
+		return tx.DeleteBucket([]byte(bucket))
 	})
 }
 
@@ -147,6 +202,98 @@ func (d *Database) ListBuckets() ([]string, error) {
 		})
 	})
 	return buckets, err
+}
+
+// ExportAll returns the entire database as bucket -> key -> value.
+func (d *Database) ExportAll() (map[string]map[string]string, error) {
+	result := make(map[string]map[string]string)
+	err := d.db.View(func(tx *bolt.Tx) error {
+		return tx.ForEach(func(name []byte, b *bolt.Bucket) error {
+			keys := make(map[string]string)
+			if err := b.ForEach(func(k, v []byte) error {
+				keys[string(k)] = string(v)
+				return nil
+			}); err != nil {
+				return err
+			}
+			result[string(name)] = keys
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ImportAll replaces the whole database with the given data. Existing
+// buckets/keys that are not present in data are removed, except for
+// preservedBuckets (local runtime state and managed instances), which are
+// kept as-is. The local dashboards setting is always kept: the imported
+// app_config never overwrites it.
+func (d *Database) ImportAll(data map[string]map[string]string) error {
+	merged := make(map[string]map[string]string, len(data))
+	for name, keys := range data {
+		merged[name] = keys
+	}
+	if raw, ok := merged["config"][appConfigKey]; ok {
+		merged["config"] = d.keepLocalDashboards(merged["config"], raw)
+	}
+	return d.db.Update(func(tx *bolt.Tx) error {
+		var buckets [][]byte
+		if err := tx.ForEach(func(name []byte, _ *bolt.Bucket) error {
+			if !preservedBuckets[string(name)] {
+				buckets = append(buckets, name)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, name := range buckets {
+			if err := tx.DeleteBucket(name); err != nil {
+				return err
+			}
+		}
+		for name, keys := range merged {
+			if preservedBuckets[name] {
+				continue
+			}
+			b, err := tx.CreateBucket([]byte(name))
+			if err != nil {
+				return fmt.Errorf("create bucket %q: %w", name, err)
+			}
+			for k, v := range keys {
+				if err := b.Put([]byte(k), []byte(v)); err != nil {
+					return fmt.Errorf("put %q/%q: %w", name, k, err)
+				}
+			}
+		}
+		return nil
+	})
+}
+
+// keepLocalDashboards removes the dashboards field from the imported
+// app_config value and merges this panel's own dashboards setting back in.
+func (d *Database) keepLocalDashboards(configKeys map[string]string, raw string) map[string]string {
+	imported := stripAppConfigDashboards(raw)
+	var local map[string]json.RawMessage
+	var localDashboards json.RawMessage
+	if err := d.Get("config", appConfigKey, &local); err == nil {
+		localDashboards = local[appConfigDashboardsField]
+	}
+	if localDashboards == nil {
+		configKeys[appConfigKey] = imported
+		return configKeys
+	}
+	var conf map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(imported), &conf); err != nil {
+		return configKeys
+	}
+	conf[appConfigDashboardsField] = localDashboards
+	if out, err := json.Marshal(conf); err == nil {
+		configKeys[appConfigKey] = string(out)
+	}
+	return configKeys
 }
 
 // ListKeys returns all keys in a bucket

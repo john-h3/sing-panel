@@ -15,6 +15,11 @@ export const kernelApi = {
   // Get system info
   getSystemInfo() {
     return api.get('/kernel/system')
+  },
+
+  // Get Go runtime monitor stats
+  getMonitor() {
+    return api.get('/kernel/monitor')
   }
 }
 

@@ -45,7 +45,7 @@
           添加匹配域名
         </el-button>
         <div class="form-tip">
-          仅对域名匹配的下载地址使用加速。支持精确匹配和子域名匹配（如 github.com 匹配 raw.githubusercontent.com）。留空列表则对所有下载生效。
+           传给内核的 http(s) 地址中，域名匹配（精确或子域名后缀）的将使用加速域名拼接，如 github.com 可匹配 github.com 与 www.github.com；GitHub 的 raw.githubusercontent.com 等域名需额外添加 githubusercontent.com。未配置匹配域名时不会匹配任何地址。
         </div>
         <div class="common-domains">
           <span class="common-label">常用域名:</span>
@@ -102,6 +102,10 @@ const loadConfig = async () => {
 }
 
 const saveConfig = async () => {
+  form.value.accelerateDomains = form.value.accelerateDomains
+    .map(domain => normalizeDomain(domain))
+    .filter(Boolean)
+    .filter((domain, index, domains) => domains.indexOf(domain) === index)
   saving.value = true
   try {
     const res = await configApi.update(form.value)

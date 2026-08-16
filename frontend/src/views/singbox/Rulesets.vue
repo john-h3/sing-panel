@@ -72,13 +72,6 @@
           <el-icon><Delete /></el-icon>
           删除选中 ({{ selectedRulesets.length }})
         </el-button>
-        <el-button type="warning" @click="batchAccelerate">
-          <el-icon><Link /></el-icon>
-          一键加速 ({{ selectedRulesets.length }})
-        </el-button>
-        <el-button @click="batchRemoveAccelerate">
-          取消加速 ({{ selectedRulesets.length }})
-        </el-button>
       </div>
     </el-card>
 
@@ -86,7 +79,7 @@
     <el-dialog
       v-model="dialogVisible"
       :title="editingRuleset ? '编辑 Ruleset' : '添加 Ruleset'"
-      width="650px"
+      width="780px"
     >
       <el-form :model="form" label-width="100px" ref="formRef" :rules="rules">
         <el-form-item label="类型" prop="type">
@@ -116,19 +109,91 @@
 
         <!-- Inline type -->
         <template v-if="form.type === 'inline'">
-          <el-form-item label="规则 (JSON)">
+          <el-form-item label="编辑方式">
+            <el-radio-group v-model="inlineEditMode" size="small" @change="onInlineModeChange">
+              <el-radio-button value="form">表单编辑</el-radio-button>
+              <el-radio-button value="json">JSON 编辑</el-radio-button>
+            </el-radio-group>
+            <div class="form-tip">表单模式可可视化编辑规则组；JSON 模式可直接粘贴或修改规则数组</div>
+          </el-form-item>
+
+          <el-form-item v-if="inlineEditMode === 'json'" label="规则 (JSON)">
             <el-input
               v-model="form.options.rules"
               type="textarea"
               :rows="12"
               placeholder='[
   {
-    "domain": ["example.com"],
-    "outbound": "direct"
+    "domain_suffix": ["dns.google", "github.com"]
+  },
+  {
+    "invert": true,
+    "source_ip_cidr": ["198.51.100.10/32"]
   }
 ]'
             />
-            <div class="form-tip">JSON 格式的规则数组，参考 sing-box route rules 格式</div>
+            <div class="form-tip">JSON 格式的规则数组，参考 sing-box rule-set rules 格式</div>
+          </el-form-item>
+
+          <el-form-item v-else label="规则列表">
+            <div class="rule-groups">
+              <div v-for="(group, gi) in ruleGroups" :key="gi" class="rule-group">
+                <div class="rule-group-header">
+                  <span class="rule-group-title">规则组 {{ gi + 1 }}</span>
+                  <div class="rule-group-actions">
+                    <span class="invert-label">反转匹配</span>
+                    <el-switch v-model="group.invert" size="small" />
+                    <el-button
+                      type="danger"
+                      link
+                      size="small"
+                      :disabled="ruleGroups.length <= 1"
+                      @click="removeRuleGroup(gi)"
+                    >删除组</el-button>
+                  </div>
+                </div>
+
+                <div v-for="(field, fi) in group.fields" :key="fi" class="rule-field-row">
+                  <el-select v-model="field.key" class="rule-field-key" size="small" placeholder="字段类型">
+                    <el-option
+                      v-for="opt in RULE_FIELD_OPTIONS"
+                      :key="opt.value"
+                      :label="opt.label"
+                      :value="opt.value"
+                    />
+                  </el-select>
+                  <div class="rule-field-values">
+                    <div v-for="(val, vi) in field.values" :key="vi" class="rule-value-row">
+                      <el-input
+                        v-model="field.values[vi]"
+                        size="small"
+                        :placeholder="getFieldPlaceholder(field.key)"
+                      />
+                      <el-button link size="small" class="rule-remove-btn" title="删除该条" @click="removeValue(field, vi)">
+                        <el-icon><Close /></el-icon>
+                      </el-button>
+                    </div>
+                    <el-button type="primary" link size="small" class="rule-add-value" @click="addValue(field)">
+                      <el-icon><Plus /></el-icon>
+                      添加值
+                    </el-button>
+                  </div>
+                  <el-button type="danger" link size="small" title="删除该字段" @click="removeField(group, fi)">
+                    <el-icon><Delete /></el-icon>
+                  </el-button>
+                </div>
+
+                <el-button type="primary" link size="small" class="rule-add-field" @click="addField(group)">
+                  <el-icon><Plus /></el-icon>
+                  添加匹配字段
+                </el-button>
+              </div>
+
+              <el-button type="primary" plain class="rule-add-group" @click="addRuleGroup">
+                <el-icon><Plus /></el-icon>
+                添加规则组
+              </el-button>
+            </div>
           </el-form-item>
         </template>
 
@@ -250,8 +315,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { singboxApi } from '../../api/singbox'
-import { configApi } from '../../api/config'
-import { Document, Plus, Download, Delete, Link } from '@element-plus/icons-vue'
+import { Document, Plus, Download, Delete, Close } from '@element-plus/icons-vue'
 
 const rulesets = ref([])
 const httpClientList = ref([])
@@ -386,6 +450,132 @@ const form = ref({
   }
 })
 
+// ---- Inline rules form editor ----
+const inlineEditMode = ref('form')
+const ruleGroups = ref([])
+
+const RULE_FIELD_OPTIONS = [
+  { value: 'domain', label: 'domain（完整域名）', placeholder: '例如: example.com' },
+  { value: 'domain_suffix', label: 'domain_suffix（域名后缀）', placeholder: '例如: github.com' },
+  { value: 'domain_keyword', label: 'domain_keyword（域名关键字）', placeholder: '例如: google' },
+  { value: 'domain_regex', label: 'domain_regex（域名正则）', placeholder: '例如: (^|\\.)example\\.com$' },
+  { value: 'ip_cidr', label: 'ip_cidr（目标 IP）', placeholder: '例如: 1.2.3.0/24' },
+  { value: 'source_ip_cidr', label: 'source_ip_cidr（来源 IP）', placeholder: '例如: 192.168.1.0/24' },
+  { value: 'port', label: 'port（目标端口）', placeholder: '例如: 80', number: true },
+  { value: 'source_port', label: 'source_port（来源端口）', placeholder: '例如: 443', number: true },
+  { value: 'port_range', label: 'port_range（端口范围）', placeholder: '例如: 8000-9000' },
+  { value: 'source_port_range', label: 'source_port_range（来源端口范围）', placeholder: '例如: 8000-9000' },
+  { value: 'process_name', label: 'process_name（进程名）', placeholder: '例如: curl' },
+  { value: 'process_path', label: 'process_path（进程路径）', placeholder: '例如: /usr/bin/curl' },
+  { value: 'process_path_regex', label: 'process_path_regex（进程路径正则）', placeholder: '正则表达式' },
+  { value: 'package_name', label: 'package_name（应用包名）', placeholder: '例如: com.android.chrome' },
+  { value: 'network', label: 'network（网络协议）', placeholder: '例如: tcp' },
+  { value: 'source_mac_address', label: 'source_mac_address（来源 MAC）', placeholder: '例如: 00:11:22:33:44:55' },
+  { value: 'source_hostname', label: 'source_hostname（来源主机名）', placeholder: '例如: mypc.local' },
+  { value: 'query_type', label: 'query_type（DNS 查询类型）', placeholder: '例如: A' }
+]
+
+const RULE_FIELD_KEY_SET = new Set(RULE_FIELD_OPTIONS.map(opt => opt.value))
+const RULE_NUMBER_FIELD_SET = new Set(
+  RULE_FIELD_OPTIONS.filter(opt => opt.number).map(opt => opt.value)
+)
+
+const getFieldPlaceholder = (key) => {
+  const opt = RULE_FIELD_OPTIONS.find(item => item.value === key)
+  return opt ? opt.placeholder : '输入值后回车确认'
+}
+
+// 将规则 JSON 数组转换为表单模型（无法识别的字段保留到 unknown，序列化时原样合并）
+const parseRulesToGroups = (rules) => {
+  if (!Array.isArray(rules)) return []
+  return rules.map(item => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      return { invert: false, fields: [], unknown: { __raw: item } }
+    }
+    const { invert, ...rest } = item
+    const fields = []
+    const unknown = {}
+    for (const [key, value] of Object.entries(rest)) {
+      if (RULE_FIELD_KEY_SET.has(key)) {
+        const arr = Array.isArray(value) ? value : [value]
+        fields.push({ key, values: arr.map(v => String(v)) })
+      } else {
+        unknown[key] = value
+      }
+    }
+    return { invert: !!invert, fields, unknown }
+  })
+}
+
+// 将表单模型序列化为规则 JSON 数组
+const groupsToRules = (groups) => {
+  return (groups || []).map(group => {
+    const rule = {}
+    if (group.invert) rule.invert = true
+    for (const field of group.fields || []) {
+      if (!field.key) continue
+      const values = (field.values || []).filter(v => v !== '' && v !== null && v !== undefined)
+      if (values.length === 0) continue
+      rule[field.key] = RULE_NUMBER_FIELD_SET.has(field.key)
+        ? values.map(v => Number(v))
+        : values.map(v => String(v))
+    }
+    if (group.unknown && typeof group.unknown === 'object') {
+      Object.assign(rule, group.unknown)
+    }
+    return rule
+  })
+}
+
+// 从 form.options.rules 同步表单模型（解析失败时置空）
+const syncRuleGroupsFromRules = () => {
+  try {
+    ruleGroups.value = parseRulesToGroups(JSON.parse(form.value.options.rules || '[]'))
+  } catch {
+    ruleGroups.value = []
+  }
+}
+
+const onInlineModeChange = (mode) => {
+  if (mode === 'form') {
+    try {
+      ruleGroups.value = parseRulesToGroups(JSON.parse(form.value.options.rules || '[]'))
+    } catch {
+      ElMessage.error('当前规则 JSON 无法解析，已停留在 JSON 编辑模式')
+      inlineEditMode.value = 'json'
+    }
+  } else {
+    form.value.options.rules = JSON.stringify(groupsToRules(ruleGroups.value), null, 2)
+  }
+}
+
+const newRuleField = () => ({ key: 'domain_suffix', values: [] })
+
+const addRuleGroup = () => {
+  ruleGroups.value.push({ invert: false, fields: [newRuleField()], unknown: {} })
+}
+
+const removeRuleGroup = (index) => {
+  if (ruleGroups.value.length <= 1) return
+  ruleGroups.value.splice(index, 1)
+}
+
+const addField = (group) => {
+  group.fields.push(newRuleField())
+}
+
+const removeField = (group, index) => {
+  group.fields.splice(index, 1)
+}
+
+const addValue = (field) => {
+  field.values.push('')
+}
+
+const removeValue = (field, index) => {
+  field.values.splice(index, 1)
+}
+
 const rules = {
   type: [{ required: true, message: '请选择类型', trigger: 'change' }],
   tag: [{ required: true, message: '请输入标签', trigger: 'blur' }]
@@ -435,6 +625,8 @@ const showAddDialog = () => {
     enabled: true,
     options: { format: 'source', rules: '', path: '', url: '', update_interval: '', http_client: '' }
   }
+  inlineEditMode.value = 'form'
+  syncRuleGroupsFromRules()
   dialogVisible.value = true
 }
 
@@ -455,6 +647,8 @@ const editRuleset = (ruleset) => {
       http_client: opts.http_client || ''
     }
   }
+  inlineEditMode.value = 'form'
+  syncRuleGroupsFromRules()
   dialogVisible.value = true
 }
 
@@ -465,6 +659,10 @@ const saveRuleset = async () => {
 
   const cleanOptions = { format: form.value.options.format }
   if (form.value.type === 'inline') {
+    // 表单模式下先从表单同步到 JSON 文本
+    if (inlineEditMode.value === 'form') {
+      form.value.options.rules = JSON.stringify(groupsToRules(ruleGroups.value), null, 2)
+    }
     // Parse JSON rules
     try {
       cleanOptions.rules = JSON.parse(form.value.options.rules || '[]')
@@ -539,108 +737,6 @@ const batchDelete = async () => {
     loadRulesets()
   } catch (err) {
     if (err !== 'cancel') ElMessage.error('删除失败')
-  }
-}
-
-const batchAccelerate = async () => {
-  if (selectedRulesets.value.length === 0) return
-  try {
-    await ElMessageBox.confirm(
-      `确定要为选中的 ${selectedRulesets.value.length} 个规则集添加加速镜像吗？`,
-      '一键加速',
-      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'info' }
-    )
-
-    // Load accelerate config
-    const configRes = await configApi.get()
-    if (!configRes.data.success) {
-      ElMessage.error('获取加速配置失败')
-      return
-    }
-    const { accelerateDomain, accelerateDomains } = configRes.data.data
-    if (!accelerateDomain) {
-      ElMessage.warning('未配置加速域名，请先在系统设置中配置')
-      return
-    }
-
-    // Build domain matching list
-    const matchDomains = (accelerateDomains && accelerateDomains.length > 0)
-      ? accelerateDomains
-      : ['github.com']
-
-    let updatedCount = 0
-
-    for (const rs of selectedRulesets.value) {
-      if (rs.type !== 'remote' || !rs.options?.url) continue
-
-      const url = rs.options.url
-      const needsAccelerate = matchDomains.some(d => url.includes(d))
-      if (!needsAccelerate) continue
-
-      // Check if already has accelerate prefix
-      if (url.startsWith(accelerateDomain)) continue
-
-      const newUrl = accelerateDomain.replace(/\/+$/, '') + '/' + url
-      const updatedRs = { ...rs, options: { ...rs.options, url: newUrl } }
-      await singboxApi.updateRuleset(updatedRs)
-      updatedCount++
-    }
-
-    if (updatedCount > 0) {
-      ElMessage.success(`成功为 ${updatedCount} 个规则集添加加速镜像`)
-      loadRulesets()
-    } else {
-      ElMessage.info('选中的规则集无需加速或已配置加速')
-    }
-  } catch (err) {
-    if (err !== 'cancel') ElMessage.error('加速失败')
-  }
-}
-
-const batchRemoveAccelerate = async () => {
-  if (selectedRulesets.value.length === 0) return
-  try {
-    await ElMessageBox.confirm(
-      `确定要取消选中的 ${selectedRulesets.value.length} 个规则集的加速镜像吗？`,
-      '取消加速',
-      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'info' }
-    )
-
-    // Load accelerate config to know what prefix to remove
-    const configRes = await configApi.get()
-    if (!configRes.data.success) {
-      ElMessage.error('获取加速配置失败')
-      return
-    }
-    const { accelerateDomain } = configRes.data.data
-    if (!accelerateDomain) {
-      ElMessage.info('未配置加速域名')
-      return
-    }
-
-    const prefix = accelerateDomain.replace(/\/+$/, '') + '/'
-
-    let updatedCount = 0
-    for (const rs of selectedRulesets.value) {
-      if (rs.type !== 'remote' || !rs.options?.url) continue
-
-      const url = rs.options.url
-      if (!url.startsWith(prefix)) continue
-
-      const newUrl = url.slice(prefix.length)
-      const updatedRs = { ...rs, options: { ...rs.options, url: newUrl } }
-      await singboxApi.updateRuleset(updatedRs)
-      updatedCount++
-    }
-
-    if (updatedCount > 0) {
-      ElMessage.success(`成功取消 ${updatedCount} 个规则集的加速镜像`)
-      loadRulesets()
-    } else {
-      ElMessage.info('选中的规则集未配置加速镜像')
-    }
-  } catch (err) {
-    if (err !== 'cancel') ElMessage.error('取消加速失败')
   }
 }
 
@@ -847,6 +943,95 @@ onMounted(() => {
   margin-top: 4px;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.rule-groups {
+  width: 100%;
+  max-height: 400px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.rule-group {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: var(--bg-page);
+}
+
+.rule-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.rule-group-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.rule-group-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.invert-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.rule-field-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.rule-field-key {
+  width: 220px;
+  flex-shrink: 0;
+}
+
+.rule-field-values {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rule-value-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rule-value-row .el-input {
+  flex: 1;
+}
+
+.rule-add-value {
+  margin-left: 0;
+  align-self: flex-start;
+}
+
+.rule-remove-btn {
+  color: var(--text-secondary);
+}
+
+.rule-remove-btn:hover {
+  color: var(--el-color-danger);
+}
+
+.rule-add-field {
+  margin-left: 0;
+}
+
+.rule-add-group {
+  width: 100%;
 }
 
 .detail-text {

@@ -41,6 +41,7 @@
           <el-menu-item index="/settings/accelerate">加速域名</el-menu-item>
           <el-menu-item index="/settings/dashboard">Dashboard</el-menu-item>
           <el-menu-item index="/settings/data">数据管理</el-menu-item>
+          <el-menu-item index="/settings/instances">多实例管理</el-menu-item>
         </el-sub-menu>
       </el-menu>
       <div class="theme-toggle">

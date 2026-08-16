@@ -2,6 +2,7 @@ package services
 
 import (
 	"log/slog"
+	"strings"
 	"sync"
 
 	"sing_panel/models"
@@ -25,6 +26,14 @@ func (s *ConfigService) Get() models.AppConfig {
 	return s.conf
 }
 
+// Reload reloads the config from the database. It should be called after an
+// external database change (e.g. database import).
+func (s *ConfigService) Reload() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loadFromDB()
+}
+
 func (s *ConfigService) Update(req models.ConfigUpdateRequest) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -32,13 +41,16 @@ func (s *ConfigService) Update(req models.ConfigUpdateRequest) {
 		s.conf.AccelerateDomain = *req.AccelerateDomain
 	}
 	if req.AccelerateDomains != nil {
-		s.conf.AccelerateDomains = *req.AccelerateDomains
+		s.conf.AccelerateDomains = normalizeAccelerateDomains(*req.AccelerateDomains)
 	}
 	if req.DashboardURL != nil {
 		s.conf.DashboardURL = *req.DashboardURL
 	}
 	if req.Dashboards != nil {
 		s.conf.Dashboards = *req.Dashboards
+	}
+	if req.AutoStartKernel != nil {
+		s.conf.AutoStartKernel = *req.AutoStartKernel
 	}
 	s.saveToDB()
 }
@@ -50,7 +62,28 @@ func (s *ConfigService) loadFromDB() {
 		return
 	}
 	s.conf = conf
+	s.conf.AccelerateDomains = normalizeAccelerateDomains(conf.AccelerateDomains)
 	slog.Info("config loaded", "accelerateDomain", conf.AccelerateDomain, "accelerateDomains", conf.AccelerateDomains)
+}
+
+// normalizeAccelerateDomains removes blank entries and duplicate domains.
+// Domain matching is intentionally opt-in: an empty list must not match all
+// URLs.
+func normalizeAccelerateDomains(domains []string) []string {
+	result := make([]string, 0, len(domains))
+	seen := make(map[string]struct{}, len(domains))
+	for _, domain := range domains {
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		if domain == "" {
+			continue
+		}
+		if _, ok := seen[domain]; ok {
+			continue
+		}
+		seen[domain] = struct{}{}
+		result = append(result, domain)
+	}
+	return result
 }
 
 func (s *ConfigService) saveToDB() {

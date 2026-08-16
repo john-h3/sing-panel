@@ -10,12 +10,13 @@ import (
 
 const systemdTemplate = `[Unit]
 Description=Sing Box Panel
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=%s
-ExecStart=%s run --listen %s
+ExecStart=%s run --listen %s --data-dir %s
 Restart=on-failure
 RestartSec=5
 
@@ -29,7 +30,7 @@ name="sing-panel"
 description="Sing Box Panel"
 
 command="%s"
-command_args="run --listen %s"
+command_args="run --listen %s --data-dir %s"
 command_background=true
 pidfile="/run/sing-panel.pid"
 directory="%s"
@@ -68,7 +69,7 @@ func getBinaryPath() (string, error) {
 	return path, nil
 }
 
-func cmdInstall(listen string) {
+func cmdInstall(listen, dataDir string) {
 	initSystem := detectInitSystem()
 	if initSystem == "" {
 		fmt.Println("错误: 未检测到支持的初始化系统 (systemd/openrc)")
@@ -82,18 +83,16 @@ func cmdInstall(listen string) {
 		os.Exit(1)
 	}
 
-	workDir := filepath.Dir(binPath)
-
 	switch initSystem {
 	case "systemd":
-		installSystemd(binPath, workDir, listen)
+		installSystemd(binPath, dataDir, listen)
 	case "openrc":
-		installOpenRC(binPath, workDir, listen)
+		installOpenRC(binPath, dataDir, listen)
 	}
 }
 
-func installSystemd(binPath, workDir, listen string) {
-	serviceFile := fmt.Sprintf(systemdTemplate, workDir, binPath, listen)
+func installSystemd(binPath, dataDir, listen string) {
+	serviceFile := fmt.Sprintf(systemdTemplate, dataDir, binPath, listen, dataDir)
 	servicePath := "/etc/systemd/system/sing-panel.service"
 
 	fmt.Println("检测到 systemd，正在安装服务...")
@@ -124,8 +123,8 @@ func installSystemd(binPath, workDir, listen string) {
 	fmt.Println("  卸载服务: sing-panel uninstall")
 }
 
-func installOpenRC(binPath, workDir, listen string) {
-	serviceFile := fmt.Sprintf(openrcTemplate, binPath, listen, workDir)
+func installOpenRC(binPath, dataDir, listen string) {
+	serviceFile := fmt.Sprintf(openrcTemplate, binPath, listen, dataDir, dataDir)
 	servicePath := "/etc/init.d/sing-panel"
 
 	fmt.Println("检测到 OpenRC，正在安装服务...")

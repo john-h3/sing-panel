@@ -9,18 +9,20 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sing_panel/handlers"
 	"sing_panel/services"
 	"strings"
 
 	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 )
 
 //go:embed frontend/dist/*
 var frontendDist embed.FS
 
-const dbPath = "./data/sing-panel.db"
+const defaultDataDir = "./data"
 
 const usage = `Sing Box Panel - sing-box 管理面板
 
@@ -33,12 +35,14 @@ Commands:
   uninstall   卸载系统服务
 
 Options:
-  --listen <addr>   监听地址 (default :8080)
-  -h, --help        显示帮助信息
+  --listen <addr>      监听地址 (default :8080)
+  --data-dir <dir>     数据目录（配置文件所在目录，default ./data）
+  -h, --help           显示帮助信息
 
 Examples:
   sing-panel run                       # 默认监听 :8080
   sing-panel run --listen :3000        # 监听 :3000
+  sing-panel run --data-dir /etc/sing-panel   # 指定数据目录
   sing-panel install                   # 安装为系统服务
   sing-panel install --listen :3000    # 安装并指定端口
   sing-panel uninstall                 # 卸载系统服务
@@ -56,8 +60,9 @@ func main() {
 	case "install":
 		installCmd := flag.NewFlagSet("install", flag.ExitOnError)
 		listen := installCmd.String("listen", ":8080", "监听地址")
+		dataDir := installCmd.String("data-dir", defaultDataDir, "数据目录")
 		installCmd.Parse(os.Args[2:])
-		cmdInstall(*listen)
+		cmdInstall(*listen, *dataDir)
 		return
 	case "uninstall":
 		cmdUninstall()
@@ -71,6 +76,7 @@ func main() {
 	// Parse run subcommand flags
 	runCmd := flag.NewFlagSet("run", flag.ExitOnError)
 	listen := runCmd.String("listen", ":8080", "监听地址")
+	dataDir := runCmd.String("data-dir", defaultDataDir, "数据目录")
 	runCmd.Parse(os.Args[2:])
 
 	// Setup structured logging
@@ -80,17 +86,19 @@ func main() {
 	slog.SetDefault(logger)
 
 	// Initialize database
+	dbPath := filepath.Join(*dataDir, "sing-panel.db")
 	db, err := services.NewDatabase(dbPath)
 	if err != nil {
-		slog.Error("failed to open database", "error", err)
+		slog.Error("failed to open database", "error", err, "path", dbPath)
 		return
 	}
 	defer db.Close()
+	slog.Info("database opened", "path", dbPath)
 
 	// Initialize services
 	configService := services.NewConfigService(db)
 	kernelService := services.NewKernelService(db)
-	singboxConfigService := services.NewSingBoxConfigService(db)
+	singboxConfigService := services.NewSingBoxConfigService(db, configService)
 	statsService := services.NewStatsService(db)
 	processService := services.NewProcessService(db, singboxConfigService, kernelService, statsService)
 
@@ -108,9 +116,16 @@ func main() {
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-Sync-Token"},
 		AllowCredentials: true,
 	}))
+
+	// Enable gzip compression for responses. Static assets under /assets are
+	// served from pre-compressed .br/.gz build artifacts instead (see
+	// precompressedFileServer below), so they are excluded here to avoid
+	// compressing already-compressed content.
+	router.Use(gzip.Gzip(gzip.DefaultCompression,
+		gzip.WithExcludedPathsRegexs([]string{`^/assets/`})))
 
 	// Serve embedded frontend files
 	distFS, err := fs.Sub(frontendDist, "frontend/dist")
@@ -119,10 +134,10 @@ func main() {
 		return
 	}
 
-	// Serve assets
-	fileServer := http.FileServer(http.FS(distFS))
+	// Serve assets (preferring pre-compressed .br/.gz build artifacts)
+	assetServer := precompressedFileServer(http.FS(distFS))
 	router.GET("/assets/*filepath", func(c *gin.Context) {
-		fileServer.ServeHTTP(c.Writer, c.Request)
+		assetServer.ServeHTTP(c.Writer, c.Request)
 	})
 
 	// SPA fallback - serve index.html for all non-API routes
@@ -131,7 +146,7 @@ func main() {
 		// Try to serve the file directly from embedded FS
 		if f, err := distFS.Open(strings.TrimPrefix(path, "/")); err == nil {
 			f.Close()
-			fileServer.ServeHTTP(c.Writer, c.Request)
+			assetServer.ServeHTTP(c.Writer, c.Request)
 			return
 		}
 		// Fallback to index.html for SPA routing
@@ -156,10 +171,16 @@ func main() {
 		processHandler := handlers.NewProcessHandler(processService)
 		statsHandler := handlers.NewStatsHandler(statsService)
 
+		// Multi-instance management
+		instanceService := services.NewInstanceService(db, configService, processService, kernelService)
+		instanceHandler := handlers.NewInstanceHandler(instanceService)
+		panelHandler := handlers.NewPanelHandler(instanceService)
+
 		kernel := api.Group("/kernel")
 		{
 			kernel.GET("/status", kernelHandler.GetStatus)
 			kernel.GET("/system", kernelHandler.GetSystemInfo)
+			kernel.GET("/monitor", kernelHandler.GetMonitor)
 		}
 
 		config := api.Group("/config")
@@ -194,6 +215,8 @@ func main() {
 			singbox.POST("/route-rules", singboxConfigHandler.AddRouteRule)
 			singbox.PUT("/route-rules", singboxConfigHandler.UpdateRouteRule)
 			singbox.DELETE("/route-rules/:id", singboxConfigHandler.DeleteRouteRule)
+			singbox.POST("/route-rules/batch-update", singboxConfigHandler.BatchUpdateRouteRules)
+			singbox.POST("/route-rules/batch-delete", singboxConfigHandler.BatchDeleteRouteRules)
 			singbox.POST("/route-rules/reorder", singboxConfigHandler.ReorderRouteRules)
 
 			singbox.GET("/route-config", singboxConfigHandler.GetRouteConfig)
@@ -226,6 +249,7 @@ func main() {
 		process := api.Group("/process")
 		{
 			process.GET("/status", processHandler.GetStatus)
+			process.GET("/config", processHandler.GetRuntimeConfig)
 			process.POST("/start", processHandler.Start)
 			process.POST("/stop", processHandler.Stop)
 			process.POST("/restart", processHandler.Restart)
@@ -236,7 +260,22 @@ func main() {
 			stats.GET("/service", statsHandler.GetServiceInfo)
 		}
 
-		dbHandler := handlers.NewDatabaseHandler(db)
+		instances := api.Group("/instances")
+		{
+			instances.GET("", instanceHandler.List)
+			instances.POST("", instanceHandler.Create)
+			instances.PUT("/:id", instanceHandler.Update)
+			instances.DELETE("/:id", instanceHandler.Delete)
+			instances.GET("/status", instanceHandler.CheckAll)
+			instances.GET("/:id/status", instanceHandler.GetStatus)
+			instances.POST("/:id/sync", instanceHandler.Sync)
+			instances.POST("/sync-all", instanceHandler.SyncAll)
+			instances.GET("/local-info", instanceHandler.LocalInfo)
+			instances.PUT("/sync-token", instanceHandler.SetSyncToken)
+			instances.GET("/:id/diff", instanceHandler.GetConfigDiff)
+		}
+
+		dbHandler := handlers.NewDatabaseHandler(db, configService)
 		dbGroup := api.Group("/db")
 		{
 			dbGroup.GET("/buckets", dbHandler.ListBuckets)
@@ -244,7 +283,27 @@ func main() {
 			dbGroup.GET("/value", dbHandler.GetValue)
 			dbGroup.PUT("/value", dbHandler.PutValue)
 			dbGroup.DELETE("/value", dbHandler.DeleteKey)
+			dbGroup.DELETE("/bucket", dbHandler.DeleteBucket)
 		}
+
+		// Endpoints used for cross-panel management. When a sync token is
+		// configured on this panel they additionally require the
+		// X-Sync-Token header (checked per request, so changes take effect
+		// without restarting).
+		syncGuard := syncTokenGuard(instanceService)
+		api.GET("/panel/info", syncGuard, panelHandler.Info)
+		api.GET("/db/export", syncGuard, dbHandler.Export)
+		api.POST("/db/import", syncGuard, dbHandler.Import)
+	}
+
+	if configService.Get().AutoStartKernel {
+		go func() {
+			if err := processService.Start(); err != nil {
+				slog.Error("failed to auto-start embedded sing-box", "error", err)
+				return
+			}
+			slog.Info("embedded sing-box auto-started")
+		}()
 	}
 
 	slog.Info("server starting", "listen", *listen)
@@ -252,4 +311,61 @@ func main() {
 	if err := router.Run(*listen); err != nil {
 		slog.Error("server failed", "error", err)
 	}
+}
+
+// syncTokenGuard optionally requires the X-Sync-Token header to match the
+// configured sync token for cross-panel sync endpoints. It reads the current
+// token on every request, so enabling or disabling token protection takes
+// effect immediately.
+func syncTokenGuard(instanceService *services.InstanceService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := instanceService.SyncToken()
+		if token == "" {
+			c.Next()
+			return
+		}
+		if c.GetHeader("X-Sync-Token") != token {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "invalid sync token"})
+			return
+		}
+		c.Next()
+	}
+}
+
+// precompressedFileServer serves static files, preferring the pre-compressed
+// .br or .gz variant produced at build time when the client advertises support.
+// Falls back to the plain file for clients without compression support.
+//
+// Vite content-hashes all asset filenames, so assets never change in place and
+// can be cached immutably by browsers.
+func precompressedFileServer(fs http.FileSystem) http.Handler {
+	fileServer := http.FileServer(fs)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		acceptEncoding := r.Header.Get("Accept-Encoding")
+		ext, encoding := "", ""
+		switch {
+		case strings.Contains(acceptEncoding, "br"):
+			ext, encoding = ".br", "br"
+		case strings.Contains(acceptEncoding, "gzip"):
+			ext, encoding = ".gz", "gzip"
+		}
+
+		if ext != "" {
+			name := strings.TrimPrefix(r.URL.Path, "/")
+			if f, err := fs.Open(name + ext); err == nil {
+				if stat, err := f.Stat(); err == nil && !stat.IsDir() {
+					defer f.Close()
+					w.Header().Set("Content-Encoding", encoding)
+					w.Header().Add("Vary", "Accept-Encoding")
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+					http.ServeContent(w, r, name, stat.ModTime(), f)
+					return
+				}
+				f.Close()
+			}
+		}
+
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		fileServer.ServeHTTP(w, r)
+	})
 }

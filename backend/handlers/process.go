@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"sing_panel/services"
 
@@ -21,6 +22,24 @@ func (h *ProcessHandler) GetStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    status,
+	})
+}
+
+// GetRuntimeConfig returns the config actually passed to the kernel
+func (h *ProcessHandler) GetRuntimeConfig(c *gin.Context) {
+	config, ok := h.service.GetRuntimeConfig()
+	if !ok {
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"running": false,
+			"data":    nil,
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"running": true,
+		"data":    json.RawMessage(config),
 	})
 }
 
