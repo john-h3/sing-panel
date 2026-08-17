@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"flag"
 	"fmt"
@@ -9,10 +10,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sing_panel/handlers"
 	"sing_panel/services"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
@@ -308,9 +312,30 @@ func main() {
 
 	slog.Info("server starting", "listen", *listen)
 	fmt.Printf("Sing Box Panel 已启动: http://%s\n", *listen)
-	if err := router.Run(*listen); err != nil {
-		slog.Error("server failed", "error", err)
+
+	// Start server in a goroutine
+	srv := &http.Server{Addr: *listen, Handler: router}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server failed", "error", err)
+		}
+	}()
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	slog.Info("shutting down server...")
+
+	// Clean up iptables before exit
+	processService.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		slog.Error("server forced to shutdown", "error", err)
 	}
+	slog.Info("server exited")
 }
 
 // syncTokenGuard optionally requires the X-Sync-Token header to match the

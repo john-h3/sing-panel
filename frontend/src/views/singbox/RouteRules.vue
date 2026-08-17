@@ -328,7 +328,7 @@ const loadData = async () => {
       allRulesets.value = rsRes.data.data || []
     }
     if (ibRes.data.success) {
-      allInbounds.value = ibRes.data.data || []
+      allInbounds.value = (ibRes.data.data || []).filter(i => i.enabled)
     }
     if (obRes.data.success) {
       enabledOutbounds.value = (obRes.data.data || []).filter(o => o.enabled)

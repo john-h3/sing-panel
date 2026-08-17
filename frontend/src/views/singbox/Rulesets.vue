@@ -342,7 +342,7 @@ const commonSearch = ref('')
 const commonList = ref([])
 const commonSelectAll = ref(false)
 
-const GEO_RAW_BASE = 'https://github.com/SagerNet/sing-geoip/raw/refs/heads/rule-set'
+const GEO_RAW_BASE = 'https://raw.githubusercontent.com/Loyalsoldier/geoip/release/srs'
 
 const GEO_NAMES = {
   ac: '阿森松岛', ad: '安道尔', ae: '阿联酋', af: '阿富汗', ag: '安提瓜和巴布达',
@@ -398,7 +398,7 @@ const GEO_NAMES = {
   zm: '赞比亚', zw: '津巴布韦'
 }
 
-const COMMON_RAW_BASE = 'https://github.com/DustinWin/ruleset_geodata/raw/refs/heads/sing-box-ruleset'
+const COMMON_RAW_BASE = 'https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset'
 
 const COMMON_RULES_DESC = {
   'ads': '广告拦截',
@@ -776,7 +776,7 @@ const showGeoDialog = async () => {
     const items = (data.tree || [])
       .filter(f => f.type === 'blob' && f.path.endsWith('.srs'))
       .map(f => {
-        const filename = f.path.replace('rule-set/', '').replace('.srs', '')
+        const filename = f.path.replace('srs/', '').replace('.srs', '')
         const parts = filename.split('-')
         const code = parts[parts.length - 1]
         return {
@@ -855,10 +855,10 @@ const showCommonDialog = async () => {
       return
     }
     const data = res.data.data
-    const items = (data.tree || [])
-      .filter(f => f.type === 'blob' && f.path.endsWith('.srs'))
+    const items = (data.assets || [])
+      .filter(f => f.name.endsWith('.srs'))
       .map(f => {
-        const filename = f.path.replace('sing-box-ruleset/', '').replace('.srs', '')
+        const filename = f.name.replace('.srs', '')
         return {
           name: filename,
           label: COMMON_RULES_DESC[filename] || filename,

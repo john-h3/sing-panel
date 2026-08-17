@@ -96,7 +96,7 @@ func (s *SingBoxConfigService) fetchGitHubTree(url string) (map[string]interface
 
 // RefreshGeoTree fetches and caches the GeoIP tree
 func (s *SingBoxConfigService) RefreshGeoTree() {
-	data, err := s.fetchGitHubTree("https://api.github.com/repos/SagerNet/sing-geoip/git/trees/rule-set")
+	data, err := s.fetchGitHubTree("https://api.github.com/repos/Loyalsoldier/geoip/git/trees/release?recursive=1")
 	if err != nil {
 		slog.Error("refresh geo tree failed", "error", err)
 		return
@@ -104,12 +104,14 @@ func (s *SingBoxConfigService) RefreshGeoTree() {
 	s.geoTreeCache = data
 	s.geoTreeTime = time.Now()
 	s.saveTreeCacheToDB("geo_tree_cache", data, s.geoTreeTime)
-	slog.Info("geo tree refreshed", "count", len(data["tree"].([]interface{})))
+	if tree, ok := data["tree"].([]interface{}); ok {
+		slog.Info("geo tree refreshed", "count", len(tree))
+	}
 }
 
-// RefreshCommonRulesetTree fetches and caches the common ruleset tree
+// RefreshCommonRulesetTree fetches and caches the common ruleset release assets
 func (s *SingBoxConfigService) RefreshCommonRulesetTree() {
-	data, err := s.fetchGitHubTree("https://api.github.com/repos/DustinWin/ruleset_geodata/git/trees/sing-box-ruleset")
+	data, err := s.fetchGitHubTree("https://api.github.com/repos/DustinWin/ruleset_geodata/releases/tags/sing-box-ruleset")
 	if err != nil {
 		slog.Error("refresh common ruleset tree failed", "error", err)
 		return
@@ -117,7 +119,9 @@ func (s *SingBoxConfigService) RefreshCommonRulesetTree() {
 	s.commonTreeCache = data
 	s.commonTreeTime = time.Now()
 	s.saveTreeCacheToDB("common_tree_cache", data, s.commonTreeTime)
-	slog.Info("common ruleset tree refreshed", "count", len(data["tree"].([]interface{})))
+	if assets, ok := data["assets"].([]interface{}); ok {
+		slog.Info("common ruleset tree refreshed", "count", len(assets))
+	}
 }
 
 // RefreshAllTrees refreshes both geo and common trees
@@ -132,7 +136,7 @@ func (s *SingBoxConfigService) GetGeoTree() (map[string]interface{}, error) {
 		return s.geoTreeCache, nil
 	}
 	// Try to refresh
-	data, err := s.fetchGitHubTree("https://api.github.com/repos/SagerNet/sing-geoip/git/trees/rule-set")
+	data, err := s.fetchGitHubTree("https://api.github.com/repos/Loyalsoldier/geoip/git/trees/release?recursive=1")
 	if err != nil {
 		// Return stale cache if available
 		if s.geoTreeCache != nil {
@@ -147,13 +151,13 @@ func (s *SingBoxConfigService) GetGeoTree() (map[string]interface{}, error) {
 	return data, nil
 }
 
-// GetCommonRulesetTree returns the cached common ruleset tree, refreshing if expired
+// GetCommonRulesetTree returns the cached common ruleset release assets, refreshing if expired
 func (s *SingBoxConfigService) GetCommonRulesetTree() (map[string]interface{}, error) {
 	if s.commonTreeCache != nil && time.Since(s.commonTreeTime) < treeCacheTTL {
 		return s.commonTreeCache, nil
 	}
 	// Try to refresh
-	data, err := s.fetchGitHubTree("https://api.github.com/repos/DustinWin/ruleset_geodata/git/trees/sing-box-ruleset")
+	data, err := s.fetchGitHubTree("https://api.github.com/repos/DustinWin/ruleset_geodata/releases/tags/sing-box-ruleset")
 	if err != nil {
 		// Return stale cache if available
 		if s.commonTreeCache != nil {
@@ -243,6 +247,9 @@ func (s *SingBoxConfigService) UpdateInbound(inbound models.Inbound) (models.Inb
 			if oldTag != inbound.Tag {
 				s.renameInboundReferences(&config, oldTag, inbound.Tag)
 			}
+			if item.Enabled && !inbound.Enabled {
+				s.removeInboundReferences(&config, inbound.Tag)
+			}
 			if err := s.SaveConfig(config); err != nil {
 				return models.Inbound{}, err
 			}
@@ -301,13 +308,56 @@ func (s *SingBoxConfigService) DeleteInbound(id string) error {
 
 	for i, item := range config.Inbounds {
 		if item.ID == id {
+			if references := findInboundReferences(&config, item.Tag); len(references) > 0 {
+				return fmt.Errorf("cannot delete inbound %q: still referenced by %s", item.Tag, strings.Join(references, ", "))
+			}
 			config.Inbounds = append(config.Inbounds[:i], config.Inbounds[i+1:]...)
-			s.removeInboundReferences(&config, item.Tag)
 			return s.SaveConfig(config)
 		}
 	}
 
 	return fmt.Errorf("inbound not found")
+}
+
+// findInboundReferences returns the locations that still refer to an inbound
+// tag. Deletion is rejected while any of these references exist.
+func findInboundReferences(config *models.SingBoxConfig, tag string) []string {
+	if tag == "" {
+		return nil
+	}
+
+	var references []string
+	for i, rule := range config.RouteRules {
+		for _, inboundTag := range rule.Inbound {
+			if inboundTag == tag {
+				references = append(references, fmt.Sprintf("route.rules[%d].inbound", i))
+				break
+			}
+		}
+		if raw, ok := rule.Options["inbound"]; ok {
+			switch value := raw.(type) {
+			case string:
+				if value == tag {
+					references = append(references, fmt.Sprintf("route.rules[%d].options.inbound", i))
+				}
+			case []string:
+				for _, inboundTag := range value {
+					if inboundTag == tag {
+						references = append(references, fmt.Sprintf("route.rules[%d].options.inbound", i))
+						break
+					}
+				}
+			case []interface{}:
+				for _, inboundTag := range value {
+					if s, ok := inboundTag.(string); ok && s == tag {
+						references = append(references, fmt.Sprintf("route.rules[%d].options.inbound", i))
+						break
+					}
+				}
+			}
+		}
+	}
+	return references
 }
 
 // removeInboundReferences removes an inbound tag from route rules. Rules that
@@ -394,6 +444,9 @@ func (s *SingBoxConfigService) UpdateOutbound(outbound models.Outbound) (models.
 	for i, item := range config.Outbounds {
 		if item.ID == outbound.ID {
 			config.Outbounds[i] = outbound
+			if item.Enabled && !outbound.Enabled {
+				removeOutboundRouteReferences(&config, outbound.Tag)
+			}
 			if err := s.SaveConfig(config); err != nil {
 				return models.Outbound{}, err
 			}
@@ -402,6 +455,30 @@ func (s *SingBoxConfigService) UpdateOutbound(outbound models.Outbound) (models.
 	}
 
 	return models.Outbound{}, fmt.Errorf("outbound not found")
+}
+
+// removeOutboundRouteReferences removes an outbound tag from route rules when
+// the outbound is disabled, to prevent dangling references.
+func removeOutboundRouteReferences(config *models.SingBoxConfig, tag string) {
+	if tag == "" {
+		return
+	}
+
+	if config.RouteConfig != nil && config.RouteConfig.Final == tag {
+		config.RouteConfig.Final = ""
+	}
+
+	for i := range config.RouteRules {
+		rule := &config.RouteRules[i]
+		if rule.Outbound == tag {
+			rule.Outbound = ""
+		}
+		if raw, ok := rule.Options["outbound"]; ok {
+			if s, ok := raw.(string); ok && s == tag {
+				delete(rule.Options, "outbound")
+			}
+		}
+	}
 }
 
 // DeleteOutbound deletes an outbound configuration
@@ -1205,6 +1282,15 @@ func (s *SingBoxConfigService) buildInbounds(inbounds []models.Inbound) []map[st
 			item["listen"] = inbound.Listen
 			item["listen_port"] = inbound.ListenPort
 		}
+		// Apply a shorter UDP NAT timeout for tproxy by default. sing-box's
+		// built-in default is 5 minutes, which lets one goroutine per UDP
+		// flow accumulate and inflates memory/goroutine/GC usage on a busy
+		// LAN. Users can override via options["udp_timeout"].
+		if inbound.Type == "tproxy" {
+			if _, ok := inbound.Options["udp_timeout"]; !ok {
+				item["udp_timeout"] = "60s"
+			}
+		}
 		// Merge custom options
 		for k, v := range inbound.Options {
 			item[k] = v
@@ -1662,6 +1748,7 @@ func (s *SingBoxConfigService) GetDefaultInboundTypes() []map[string]string {
 		{"type": "mixed", "name": "Mixed 代理"},
 		{"type": "tun", "name": "TUN 网卡"},
 		{"type": "shadowsocks", "name": "Shadowsocks 服务端"},
+		{"type": "tproxy", "name": "TProxy 透明代理"},
 	}
 }
 

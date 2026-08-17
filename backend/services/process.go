@@ -85,9 +85,15 @@ func (s *ProcessService) Start() error {
 	s.mu.Lock()
 	s.runtimeConfig = configJSON
 	s.mu.Unlock()
+
+	// Set up firewall rules for tproxy inbounds before starting the kernel
+	s.setupTproxyIptables()
+
 	// Start embedded sing-box
 	boxService := GetBoxService()
 	if err := boxService.Start(configJSON); err != nil {
+		slog.Error("failed to start embedded sing-box, cleaning up iptables", "error", err)
+		s.cleanupTproxyIptables()
 		return fmt.Errorf("failed to start embedded sing-box: %w", err)
 	}
 
@@ -119,6 +125,10 @@ func (s *ProcessService) Stop() error {
 	s.mu.Lock()
 	s.runtimeConfig = nil
 	s.mu.Unlock()
+
+	// Clean up iptables rules after stopping the kernel
+	s.cleanupTproxyIptables()
+
 	return nil
 }
 
@@ -144,4 +154,31 @@ func (s *ProcessService) generateConfigJSON() ([]byte, error) {
 	}
 
 	return json.MarshalIndent(config, "", "  ")
+}
+
+// setupTproxyIptables sets up transparent-proxy traffic steering for all
+// enabled tproxy inbounds using the nftables/netlink syscall API.
+func (s *ProcessService) setupTproxyIptables() {
+	config, err := s.configService.GetConfig()
+	if err != nil {
+		slog.Error("failed to get config for tproxy firewall setup", "error", err)
+		return
+	}
+
+	var tproxyInbounds []models.Inbound
+	for _, inbound := range config.Inbounds {
+		if inbound.Type == "tproxy" && inbound.Enabled {
+			tproxyInbounds = append(tproxyInbounds, inbound)
+		}
+	}
+	if len(tproxyInbounds) == 0 {
+		return
+	}
+
+	s.setupTproxyFirewall(tproxyInbounds)
+}
+
+// cleanupTproxyIptables removes any tproxy traffic-steering rules.
+func (s *ProcessService) cleanupTproxyIptables() {
+	s.cleanupTproxyFirewall()
 }

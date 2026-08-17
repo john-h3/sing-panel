@@ -21,11 +21,15 @@
         </el-table-column>
         <el-table-column label="监听地址" width="150">
           <template #default="{ row }">
-            <template v-if="row.type !== 'tun'">
+            <template v-if="row.type !== 'tun' && row.type !== 'tproxy'">
               {{ row.listen || '0.0.0.0' }}:{{ row.listenPort }}
             </template>
-            <template v-else>
+            <template v-else-if="row.type === 'tun'">
               {{ (row.options?.address || []).join(', ') || '-' }}
+            </template>
+            <template v-else-if="row.type === 'tproxy'">
+              {{ row.listen || '0.0.0.0' }}:{{ row.listenPort }}
+              <el-tag size="small" style="margin-left:4px">{{ row.options?.network ? '仅 ' + row.options.network.toUpperCase() : 'TCP+UDP' }}</el-tag>
             </template>
           </template>
         </el-table-column>
@@ -73,13 +77,35 @@
           <el-input v-model="form.tag" placeholder="例如: http-in" />
         </el-form-item>
 
-        <template v-if="form.type !== 'tun'">
+        <template v-if="form.type !== 'tun' && form.type !== 'tproxy'">
           <el-form-item label="监听地址">
             <el-input v-model="form.listen" placeholder="0.0.0.0" />
           </el-form-item>
 
           <el-form-item label="监听端口" prop="listenPort">
             <el-input-number v-model="form.listenPort" :min="1" :max="65535" />
+          </el-form-item>
+        </template>
+
+        <template v-if="form.type === 'tproxy'">
+          <el-form-item label="监听地址">
+            <el-input v-model="form.listen" placeholder="0.0.0.0" />
+          </el-form-item>
+
+          <el-form-item label="监听端口" prop="listenPort">
+            <el-input-number v-model="form.listenPort" :min="1" :max="65535" />
+          </el-form-item>
+
+          <el-form-item label="网络">
+            <el-select v-model="tproxyNetwork" placeholder="自动 (TCP+UDP)" clearable>
+              <el-option label="TCP" value="tcp" />
+              <el-option label="UDP" value="udp" />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item label="UDP 超时">
+            <el-input v-model="tproxyUdpTimeout" placeholder="60s（默认），留空则使用全局默认" />
+            <div class="form-tip">UDP NAT 会话超时，调小可降低内存/goroutine/GC 开销</div>
           </el-form-item>
         </template>
 
@@ -165,6 +191,10 @@ const form = ref({
 
 // TUN specific fields
 const tunAddressList = ref(['172.19.0.1/30'])
+
+// TProxy specific fields
+const tproxyNetwork = ref('')
+const tproxyUdpTimeout = ref('')
 const tunMtu = ref(9000)
 const tunStack = ref('gvisor')
 const tunAutoRoute = ref(true)
@@ -174,7 +204,21 @@ const tunStrictRoute = ref(true)
 const rules = {
   type: [{ required: true, message: '请选择类型', trigger: 'change' }],
   tag: [{ required: true, message: '请输入标签', trigger: 'blur' }],
-  listenPort: [{ required: true, message: '请输入端口', trigger: 'blur' }]
+  listenPort: [
+    {
+      required: true,
+      trigger: 'blur',
+      validator: (rule, value, callback) => {
+        if (form.value.type === 'tun') {
+          callback()
+        } else if (value === undefined || value === null || value === '') {
+          callback(new Error('请输入端口'))
+        } else {
+          callback()
+        }
+      }
+    }
+  ]
 }
 
 const addTunAddress = () => {
@@ -223,6 +267,8 @@ const showAddDialog = () => {
     options: {}
   }
   resetTunFields()
+  tproxyNetwork.value = ''
+  tproxyUdpTimeout.value = '60s'
   dialogVisible.value = true
 }
 
@@ -250,6 +296,14 @@ const editInbound = (inbound) => {
     resetTunFields()
   }
 
+  if (inbound.type === 'tproxy') {
+    tproxyNetwork.value = inbound.options?.network || ''
+    tproxyUdpTimeout.value = inbound.options?.udp_timeout || '60s'
+  } else {
+    tproxyNetwork.value = ''
+    tproxyUdpTimeout.value = ''
+  }
+
   dialogVisible.value = true
 }
 
@@ -259,7 +313,8 @@ const onTypeChange = (type) => {
     socks: 1080,
     mixed: 2080,
     tun: 0,
-    shadowsocks: 8388
+    shadowsocks: 8388,
+    tproxy: 1080
   }
   form.value.listenPort = portMap[type] || 8080
   if (type === 'tun') {
@@ -294,6 +349,21 @@ const saveInbound = async () => {
       auto_route: tunAutoRoute.value,
       auto_redirect: tunAutoRedirect.value,
       strict_route: tunStrictRoute.value,
+    }
+  } else if (payload.type === 'tproxy') {
+    if (tproxyNetwork.value) {
+      payload.options = { ...payload.options, network: tproxyNetwork.value }
+    } else {
+      if (payload.options) {
+        delete payload.options.network
+      }
+    }
+    if (tproxyUdpTimeout.value) {
+      payload.options = { ...payload.options, udp_timeout: tproxyUdpTimeout.value }
+    } else {
+      if (payload.options) {
+        delete payload.options.udp_timeout
+      }
     }
   }
 
@@ -337,7 +407,12 @@ const deleteInbound = async (inbound) => {
     loadInbounds()
   } catch (err) {
     if (err !== 'cancel') {
-      ElMessage.error('删除失败')
+      const message = err.response?.data?.error || ''
+      if (message.includes('referenced')) {
+        ElMessage.error('该入站已被路由规则使用，请先移除引用')
+      } else {
+        ElMessage.error('删除失败: ' + (message || err.message || '未知错误'))
+      }
     }
   }
 }
