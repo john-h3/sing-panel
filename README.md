@@ -6,6 +6,7 @@
 
 - 嵌入 sing-box 内核（libbox），开箱即用，无需单独下载内核
 - 完整的 sing-box 配置管理（Inbound / Outbound / Ruleset / 路由规则 / DNS / 服务 / HTTP 客户端 / Experimental）
+- **TProxy 透明代理**：启用 tproxy inbound 后，自动通过 nftables/netlink 系统调用配置防火墙规则（无需安装 iptables/nft/ip 命令行工具），客户端网关指向本机即可透明代理；停止内核时自动清理规则
 - 支持从订阅链接导入配置、GitHub GEO 规则树自动刷新
 - 实时状态监控（内存 / 协程 / GC / 运行时长）
 - 数据库导出 / 导入
@@ -77,6 +78,17 @@ cd backend && go run . --data-dir ./data   # 开发模式
 4. **同步令牌**（可选）：面板可设置一个令牌，设置后其他面板访问导出/导入/面板信息接口必须携带该令牌（`X-Sync-Token` 头），令牌存于本机状态中，不会被配置同步覆盖
 
 一致性判断基于导出的配置数据：`config` 与 `singbox` 两个 bucket（排除 GEO 规则树缓存）；各面板本机的运行状态、managed instances、同步令牌不参与比对。
+
+## TProxy 透明代理
+
+1. 在「Singbox → Inbound」中新增类型为 **TProxy** 的入站，配置监听地址（默认 `0.0.0.0`）、监听端口（如 `5678`）和网络（`tcp` / `udp` / 自动 TCP+UDP）
+2. 保存后启动 sing-box 内核，面板会自动通过 **nftables + netlink 系统调用**写入 TPROXY 规则与路由规则：
+   - 拦截所有转发流量到 tproxy 端口，并排除本地目的、广播/组播、已标记流量，避免环路与 NAT 会话泄漏
+   - 支持多 tproxy 入站、IPv4/IPv6
+3. 局域网客户端将**默认网关**指向本机 IP 即可透明代理
+4. 停止内核或面板退出时，自动清理全部规则
+
+> **依赖**：需以 root 运行或具备 `CAP_NET_ADMIN`；不依赖 `iptables`/`nft`/`ip` 命令行工具（内核需支持 nf_tables，Linux 4.17+ 默认具备）。若需要调优 UDP NAT 会话开销，可在 tproxy 表单中调整「UDP 超时」。
 
 ## API 接口
 
