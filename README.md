@@ -112,6 +112,9 @@ cd backend && go run . --data-dir ./data   # 开发模式
 | POST | /api/singbox/import | 从订阅链接导入配置 |
 | GET/POST | /api/process/... | sing-box 进程控制（start/stop/restart/status） |
 | GET | /api/stats/service | 服务统计信息 |
+| GET | /api/system/init | 检测初始化系统（systemd/openrc） |
+| POST | /api/system/restart-service | 重启 sing-panel 系统服务 |
+| POST | /api/system/reboot-machine | 重启宿主机操作系统 |
 | GET/POST/PUT/DELETE | /api/instances | 多实例管理（增删改查） |
 | GET | /api/instances/status | 检查全部实例状态与配置一致性 |
 | POST | /api/instances/:id/sync | 同步配置（push / pull） |
