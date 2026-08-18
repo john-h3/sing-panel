@@ -44,6 +44,26 @@
           <el-menu-item index="/settings/instances">多实例管理</el-menu-item>
         </el-sub-menu>
       </el-menu>
+      <div class="sidebar-actions">
+        <el-tooltip content="重启 sing-panel 服务" placement="top">
+          <button
+            class="action-btn"
+            :disabled="actionLoading"
+            @click="confirmRestartService"
+          >
+            <el-icon :size="16"><RefreshRight /></el-icon>
+          </button>
+        </el-tooltip>
+        <el-tooltip content="重启机器（操作系统）" placement="top">
+          <button
+            class="action-btn danger"
+            :disabled="actionLoading"
+            @click="confirmRebootMachine"
+          >
+            <el-icon :size="16"><SwitchButton /></el-icon>
+          </button>
+        </el-tooltip>
+      </div>
       <div class="theme-toggle">
         <span
           class="theme-icon"
@@ -75,10 +95,23 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessageBox, ElMessage } from 'element-plus'
+import axios from 'axios'
 import { useTheme } from './composables/useTheme'
-import { Monitor, Setting, Connection, Odometer, Box, Sunny, Moon } from '@element-plus/icons-vue'
+import { systemApi } from './api/system'
+import {
+  Monitor,
+  Setting,
+  Connection,
+  Odometer,
+  Box,
+  Sunny,
+  Moon,
+  RefreshRight,
+  SwitchButton
+} from '@element-plus/icons-vue'
 
 const route = useRoute()
 const { theme, setTheme } = useTheme()
@@ -94,6 +127,93 @@ const openeds = computed(() => {
   if (path.startsWith('/settings')) opens.push('/settings')
   return opens
 })
+
+const actionLoading = ref(false)
+
+// waitForServer polls the panel until it responds again, then re-enables
+// the action buttons. Used after service/machine restart so the UI recovers
+// automatically without a manual page refresh.
+const waitForServer = (onBack) => {
+  let attempts = 0
+  const maxAttempts = 600 // ~10 min at 1s intervals
+  const poll = async () => {
+    attempts++
+    try {
+      await axios.get('/api/system/init', { timeout: 3000 })
+      actionLoading.value = false
+      onBack(true)
+    } catch (e) {
+      // Any HTTP response means the server is back up.
+      if (e.response) {
+        actionLoading.value = false
+        onBack(true)
+        return
+      }
+      if (attempts > maxAttempts) {
+        actionLoading.value = false
+        ElMessage.warning('等待服务上线超时，请手动刷新页面')
+        return
+      }
+      setTimeout(poll, 1000)
+    }
+  }
+  // Delay the first probe so a restarting/killed service doesn't answer
+  // before it actually goes down.
+  setTimeout(poll, 2000)
+}
+
+const confirmRestartService = () => {
+  ElMessageBox.confirm(
+    '确定要重启 sing-panel 服务吗？重启期间面板将短暂不可用。',
+    '重启服务',
+    {
+      confirmButtonText: '确定重启',
+      cancelButtonText: '取消',
+      type: 'warning'
+    }
+  )
+    .then(async () => {
+      actionLoading.value = true
+      try {
+        await systemApi.restartService()
+        ElMessage.success('sing-panel 服务正在重启，请稍候...')
+        waitForServer((ok) => {
+          if (ok) ElMessage.success('sing-panel 服务已恢复在线')
+        })
+      } catch (e) {
+        ElMessage.error(e.response?.data?.error || '重启服务失败')
+        actionLoading.value = false
+      }
+    })
+    .catch(() => {})
+}
+
+const confirmRebootMachine = () => {
+  ElMessageBox.confirm(
+    '确定要重启机器（操作系统）吗？机器重启期间所有服务都会中断，请谨慎操作。',
+    '重启机器',
+    {
+      confirmButtonText: '确定重启',
+      cancelButtonText: '取消',
+      type: 'error',
+      confirmButtonClass: 'el-button--danger'
+    }
+  )
+    .then(async () => {
+      actionLoading.value = true
+      try {
+        await systemApi.rebootMachine()
+        ElMessage.success('机器正在重启，请稍后重新连接...')
+        waitForServer((ok) => {
+          if (ok) ElMessage.success('机器已恢复在线')
+        })
+      } catch (e) {
+        ElMessage.error(e.response?.data?.error || '重启机器失败')
+        actionLoading.value = false
+      }
+    })
+    .catch(() => {})
+}
 </script>
 
 <style scoped>
@@ -165,12 +285,48 @@ const openeds = computed(() => {
 }
 
 .theme-toggle {
+  padding: 12px 16px;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.sidebar-actions {
   margin-top: auto;
   padding: 12px 16px;
   border-top: 1px solid var(--sidebar-border);
   display: flex;
   justify-content: center;
-  gap: 8px;
+  gap: 12px;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.action-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.action-btn.danger:hover:not(:disabled) {
+  background: #f56c6c;
+  color: #fff;
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .theme-icon {

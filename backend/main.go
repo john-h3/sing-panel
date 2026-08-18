@@ -180,6 +180,8 @@ func main() {
 		instanceHandler := handlers.NewInstanceHandler(instanceService)
 		panelHandler := handlers.NewPanelHandler(instanceService)
 
+		systemHandler := handlers.NewSystemHandler()
+
 		kernel := api.Group("/kernel")
 		{
 			kernel.GET("/status", kernelHandler.GetStatus)
@@ -262,6 +264,13 @@ func main() {
 		stats := api.Group("/stats")
 		{
 			stats.GET("/service", statsHandler.GetServiceInfo)
+		}
+
+		system := api.Group("/system")
+		{
+			system.GET("/init", systemHandler.GetInitSystem)
+			system.POST("/restart-service", systemHandler.RestartService)
+			system.POST("/reboot-machine", systemHandler.RebootMachine)
 		}
 
 		instances := api.Group("/instances")
