@@ -35,9 +35,6 @@ command_background=true
 pidfile="/run/sing-panel.pid"
 directory="%s"
 
-output_log="/var/log/sing-panel.log"
-error_log="/var/log/sing-panel.log"
-
 depend() {
     need net
     after firewall
@@ -74,6 +71,16 @@ func cmdInstall(listen, dataDir string) {
 	if initSystem == "" {
 		fmt.Println("错误: 未检测到支持的初始化系统 (systemd/openrc)")
 		fmt.Println("仅支持 Debian (systemd) 和 Alpine (openrc)")
+		os.Exit(1)
+	}
+
+	// Init systems do not necessarily start the service from the directory
+	// where the install command was run. Persist an absolute data directory in
+	// the generated service file so OpenRC can chdir reliably.
+	var err error
+	dataDir, err = filepath.Abs(dataDir)
+	if err != nil {
+		fmt.Printf("错误: 获取数据目录绝对路径失败: %v\n", err)
 		os.Exit(1)
 	}
 

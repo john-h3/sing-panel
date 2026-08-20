@@ -83,11 +83,39 @@ func main() {
 	dataDir := runCmd.String("data-dir", defaultDataDir, "数据目录")
 	runCmd.Parse(os.Args[2:])
 
+	logPath := logPathFromEnv(defaultLogPath)
+	logMaxBytes, err := logMaxBytesFromEnv(defaultLogMaxBytes)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "日志配置错误: %v\n", err)
+		return
+	}
+	cleanupLogging, err := setupProcessLogging(logPath, logMaxBytes)
+	if err != nil {
+		// Local development commonly runs without permission to write /var/log.
+		// Keep the service usable by falling back to its data directory; deployed
+		// root/OpenRC installations continue to use /var/log by default.
+		fallbackPath := filepath.Join(*dataDir, "sing-panel.log")
+		cleanupLogging, err = setupProcessLogging(fallbackPath, logMaxBytes)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "初始化应用日志失败: %v\n", err)
+			return
+		}
+		logPath = fallbackPath
+	}
+	defer func() {
+		if err := cleanupLogging(); err != nil {
+			fmt.Fprintf(os.Stderr, "关闭应用日志失败: %v\n", err)
+		}
+	}()
+
 	// Setup structured logging
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
+	fileHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: &services.PanelLogLevel,
+	})
+	memoryHandler := services.NewMemorySlogHandler(services.GetMemoryLog())
+	logger := slog.New(&fanoutHandler{handlers: []slog.Handler{fileHandler, memoryHandler}})
 	slog.SetDefault(logger)
+	slog.Info("application logging initialized", "path", logPath, "max_bytes", logMaxBytes)
 
 	// Initialize database
 	dbPath := filepath.Join(*dataDir, "sing-panel.db")
@@ -113,6 +141,11 @@ func main() {
 	singboxConfigService.StartTreeRefreshLoop()
 
 	// Setup Gin router
+	// Gin initializes these package-level writers before main runs, so update
+	// them explicitly after the process output has been redirected to the
+	// application-owned rolling log pipe.
+	gin.DefaultWriter = &memoryLogWriter{writer: os.Stdout, level: slog.LevelInfo, source: "gin"}
+	gin.DefaultErrorWriter = &memoryLogWriter{writer: os.Stderr, level: slog.LevelError, source: "gin"}
 	router := gin.Default()
 	router.RedirectTrailingSlash = false
 
@@ -173,6 +206,9 @@ func main() {
 		configHandler := handlers.NewConfigHandler(configService)
 		singboxConfigHandler := handlers.NewSingBoxConfigHandler(singboxConfigService, configService)
 		processHandler := handlers.NewProcessHandler(processService)
+		// Health is exposed at the panel root so load balancers and external
+		// probes can check it without an API prefix.
+		router.GET("/health", processHandler.Health)
 		statsHandler := handlers.NewStatsHandler(statsService)
 
 		// Multi-instance management
@@ -307,6 +343,11 @@ func main() {
 		api.GET("/panel/info", syncGuard, panelHandler.Info)
 		api.GET("/db/export", syncGuard, dbHandler.Export)
 		api.POST("/db/import", syncGuard, dbHandler.Import)
+
+		logHandler := handlers.NewLogHandler(services.GetMemoryLog())
+		api.GET("/logs", logHandler.List)
+		api.GET("/logs/stream", logHandler.Stream)
+		api.DELETE("/logs", logHandler.Clear)
 	}
 
 	if configService.Get().AutoStartKernel {

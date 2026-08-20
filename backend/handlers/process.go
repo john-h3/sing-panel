@@ -25,6 +25,18 @@ func (h *ProcessHandler) GetStatus(c *gin.Context) {
 	})
 }
 
+// Health reports whether the embedded sing-box kernel is running.
+// This endpoint is intentionally independent of the regular API response
+// envelope so it can be used directly by external health checkers.
+func (h *ProcessHandler) Health(c *gin.Context) {
+	if h.service.GetStatus().Running {
+		c.Status(http.StatusOK)
+		return
+	}
+
+	c.Status(http.StatusBadRequest)
+}
+
 // GetRuntimeConfig returns the config actually passed to the kernel
 func (h *ProcessHandler) GetRuntimeConfig(c *gin.Context) {
 	config, ok := h.service.GetRuntimeConfig()

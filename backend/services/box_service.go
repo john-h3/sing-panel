@@ -9,6 +9,7 @@ import (
 
 	"github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/include"
+	boxlog "github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json"
 )
@@ -55,12 +56,24 @@ func (s *BoxService) Start(configJSON []byte) error {
 		return fmt.Errorf("failed to parse config: %w", err)
 	}
 
+	// The embedded logger writes to the process stdout, which is owned by the
+	// application rolling logger initialized in main. Keep a user-specified
+	// level, but avoid the very noisy per-connection info logs by default.
+	if options.Log == nil {
+		options.Log = &option.LogOptions{}
+	}
+	options.Log.Output = "stdout"
+	options.Log.DisableColor = true
+	// The panel setting is the single source of truth for both log streams.
+	options.Log.Level = CurrentLogLevel()
+
 	slog.Info("config parsed successfully")
 
 	// Create sing-box instance
 	b, err := box.New(box.Options{
-		Context: ctx,
-		Options: options,
+		Context:           ctx,
+		Options:           options,
+		PlatformLogWriter: NewSingBoxMemoryWriter(GetMemoryLog()),
 	})
 	if err != nil {
 		cancel()
@@ -79,6 +92,25 @@ func (s *BoxService) Start(configJSON []byte) error {
 
 	s.box = b
 	slog.Info("sing-box embedded service started")
+	return nil
+}
+
+// SetLogLevel applies the unified setting to a running embedded instance. New
+// instances also read CurrentLogLevel during Start.
+func (s *BoxService) SetLogLevel(level string) error {
+	normalized, err := NormalizeLogLevel(level)
+	if err != nil {
+		return err
+	}
+	if err := ApplyLogLevel(normalized); err != nil {
+		return err
+	}
+	s.mu.RLock()
+	b := s.box
+	if b != nil {
+		b.LogFactory().SetLevel(boxlog.Level(CurrentSingBoxLogLevel()))
+	}
+	s.mu.RUnlock()
 	return nil
 }
 

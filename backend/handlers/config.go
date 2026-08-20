@@ -36,7 +36,13 @@ func (h *ConfigHandler) Update(c *gin.Context) {
 		return
 	}
 
-	h.service.Update(req)
+	if err := h.service.Update(req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Config updated",

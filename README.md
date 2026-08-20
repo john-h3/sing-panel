@@ -9,6 +9,8 @@
 - **TProxy 透明代理**：启用 tproxy inbound 后，自动通过 nftables/netlink 系统调用配置防火墙规则（无需安装 iptables/nft/ip 命令行工具），客户端网关指向本机即可透明代理；停止内核时自动清理规则
 - 支持从订阅链接导入配置、GitHub GEO 规则树自动刷新
 - 实时状态监控（内存 / 协程 / GC / 运行时长）
+- 健康检查接口：根据嵌入式 sing-box 内核是否运行返回 HTTP 200 / 400
+- 日志管理：统一查看面板、Gin 和 sing-box 日志，支持实时 SSE 推送、暂停/恢复和级别筛选
 - 数据库导出 / 导入
 - **多实例管理**：在单个面板上管理多个面板实例，基于导出/导入实现配置同步，实时对比各实例配置是否一致
 
@@ -65,6 +67,43 @@ chmod +x build.sh
 cd backend && go run . --data-dir ./data   # 开发模式
 ```
 
+### 多环境部署
+
+根目录的 `deploy_all.sh` 用于将 ARM64 版本依次部署到 test 和 prod 环境。脚本只编译一次，流程为：
+
+```text
+前端构建 + Go 编译（linux/arm64）
+→ 部署并验证 test
+→ 等待 3 秒
+→ 部署并验证 prod
+```
+
+执行：
+
+```bash
+chmod +x deploy_all.sh
+./deploy_all.sh
+```
+
+部署脚本会将新二进制先上传为临时文件，停止旧服务后再原子替换实际的 OpenRC 执行文件；停止时会校验进程并在必要时使用 TERM/KILL，启动后会检查服务进程是否仍在运行。部署脚本默认使用脚本内配置的远端地址，执行前请确认 SSH 免密登录和目标环境配置正确。
+
+> 部署脚本匹配 `deploy_*.sh`，默认由 Git 忽略，不会被纳入版本跟踪。
+
+### 健康检查
+
+面板默认监听 `:8080`，提供无需认证的健康检查接口：
+
+```bash
+curl -i http://127.0.0.1:8080/health
+```
+
+返回规则：
+
+- `200 OK`：嵌入式 sing-box 内核正在运行
+- `400 Bad Request`：嵌入式 sing-box 内核未运行
+
+该接口只检查内核运行状态，不检查第三方依赖；适合负载均衡器、OpenRC 或外部监控探测。
+
 ## 多实例管理
 
 在「系统设置 → 多实例管理」页面：
@@ -94,6 +133,7 @@ cd backend && go run . --data-dir ./data   # 开发模式
 
 | 方法 | 路径 | 描述 |
 |------|------|------|
+| GET | /health | 内核健康检查，运行返回 200，未运行返回 400 |
 | GET | /api/panel/info | 本面板基本信息（供实例管理使用） |
 | GET | /api/kernel/status | 获取当前内核状态 |
 | GET | /api/kernel/system | 获取系统信息 |
@@ -123,6 +163,22 @@ cd backend && go run . --data-dir ./data   # 开发模式
 | GET | /api/instances/local-info | 本机面板信息与配置指纹 |
 | GET | /api/db/export | 导出数据库（受同步令牌保护） |
 | POST | /api/db/import | 导入数据库（受同步令牌保护） |
+| GET | /api/logs | 查询内存日志，支持 `limit`、`after`、`level`、`source` 参数 |
+| GET | /api/logs/stream | 通过 SSE 接收实时内存日志 |
+| DELETE | /api/logs | 清空内存日志 |
+
+### 日志管理
+
+「设置 → 日志管理」页面支持：
+
+- 调整面板和嵌入式 sing-box 的统一日志级别；
+- 查看面板、Gin、sing-box 的内存日志；
+- 暂停实时日志接收，恢复后按日志序号补齐尚未被环形缓冲区覆盖的日志；
+- 按来源和最低日志级别筛选；
+- 开启或关闭“过滤检测 API”。该开关位于内存日志筛选区，与自动滚动并列，切换立即生效，不保存到配置；
+- 开启过滤时，前端仅隐藏 `/health` 的 Gin 访问记录，后端仍会保留日志。页面先过滤再显示最近 100 条，原始内存日志最多保留 2048 条。
+
+日志文件默认写入 `/var/log/sing-panel.log`，按大小滚动并保留压缩归档；无权限写入默认目录时，应用会回退到数据目录下的 `sing-panel.log`。
 
 ## 项目结构
 

@@ -14,6 +14,7 @@ type AppConfig struct {
 	DashboardURL      string            `json:"dashboardURL"`      // Deprecated: use Dashboards instead
 	Dashboards        []DashboardConfig `json:"dashboards"`        // Multiple dashboard configurations
 	AutoStartKernel   bool              `json:"autoStartKernel"`   // Start the embedded kernel when the panel starts
+	LogLevel          string            `json:"logLevel"`          // Unified panel and sing-box log level
 }
 
 // ConfigUpdateRequest represents a config update request
@@ -24,4 +25,5 @@ type ConfigUpdateRequest struct {
 	DashboardURL      *string            `json:"dashboardURL"`
 	Dashboards        *[]DashboardConfig `json:"dashboards"`
 	AutoStartKernel   *bool              `json:"autoStartKernel"`
+	LogLevel          *string            `json:"logLevel"`
 }

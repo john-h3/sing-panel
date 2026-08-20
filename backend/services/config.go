@@ -34,7 +34,16 @@ func (s *ConfigService) Reload() {
 	s.loadFromDB()
 }
 
-func (s *ConfigService) Update(req models.ConfigUpdateRequest) {
+func (s *ConfigService) Update(req models.ConfigUpdateRequest) error {
+	var logLevel string
+	if req.LogLevel != nil {
+		var err error
+		logLevel, err = NormalizeLogLevel(*req.LogLevel)
+		if err != nil {
+			return err
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if req.AccelerateDomain != nil {
@@ -52,18 +61,34 @@ func (s *ConfigService) Update(req models.ConfigUpdateRequest) {
 	if req.AutoStartKernel != nil {
 		s.conf.AutoStartKernel = *req.AutoStartKernel
 	}
+	if req.LogLevel != nil {
+		if err := GetBoxService().SetLogLevel(logLevel); err != nil {
+			return err
+		}
+		s.conf.LogLevel = logLevel
+	}
 	s.saveToDB()
+	return nil
 }
 
 func (s *ConfigService) loadFromDB() {
 	var conf models.AppConfig
 	if err := s.db.Get("config", "app_config", &conf); err != nil {
-		slog.Debug("no config in database", "error", err)
+		s.conf.LogLevel = DefaultLogLevel
+		_ = ApplyLogLevel(DefaultLogLevel)
 		return
 	}
 	s.conf = conf
 	s.conf.AccelerateDomains = normalizeAccelerateDomains(conf.AccelerateDomains)
-	slog.Info("config loaded", "accelerateDomain", conf.AccelerateDomain, "accelerateDomains", conf.AccelerateDomains)
+	level, err := NormalizeLogLevel(conf.LogLevel)
+	if err != nil {
+		s.conf.LogLevel = DefaultLogLevel
+		level = DefaultLogLevel
+	}
+	if err := GetBoxService().SetLogLevel(level); err != nil {
+		s.conf.LogLevel = DefaultLogLevel
+		_ = ApplyLogLevel(DefaultLogLevel)
+	}
 }
 
 // normalizeAccelerateDomains removes blank entries and duplicate domains.

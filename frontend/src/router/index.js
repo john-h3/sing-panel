@@ -84,6 +84,11 @@ const routes = [
         path: 'instances',
         name: 'SettingsInstances',
         component: () => import('../views/settings/Instances.vue')
+      },
+      {
+        path: 'logs',
+        name: 'SettingsLogs',
+        component: () => import('../views/settings/Logs.vue')
       }
     ]
   }
