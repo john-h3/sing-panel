@@ -177,6 +177,19 @@ func (r *MemoryLogRing) Clear() {
 	r.mu.Unlock()
 }
 
+// CloseAllSubscribers disconnects every live SSE subscriber. It runs during
+// HTTP server shutdown so idle log streams do not block srv.Shutdown until
+// its deadline expires and delay the process exit past the init system's
+// stop timeout.
+func (r *MemoryLogRing) CloseAllSubscribers() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for client := range r.clients {
+		delete(r.clients, client)
+		close(client.channel)
+	}
+}
+
 func (r *MemoryLogRing) Subscribe() (<-chan MemoryLogEntry, func()) {
 	return r.SubscribeFiltered("", "")
 }

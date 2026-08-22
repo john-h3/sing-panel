@@ -365,6 +365,11 @@ func main() {
 
 	// Start server in a goroutine
 	srv := &http.Server{Addr: *listen, Handler: router}
+	// Long-lived SSE log streams never end on their own and would make
+	// srv.Shutdown always run into its deadline. Close them up front.
+	srv.RegisterOnShutdown(func() {
+		services.GetMemoryLog().CloseAllSubscribers()
+	})
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server failed", "error", err)

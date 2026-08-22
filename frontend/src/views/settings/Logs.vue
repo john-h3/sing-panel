@@ -92,6 +92,7 @@ const levels = [
 ]
 const LOG_TAIL_SIZE = 100
 const LOG_BUFFER_SIZE = 2048
+const LEVEL_RANKS = { trace: 0, debug: 1, info: 2, warn: 3, error: 4 }
 const form = ref({ logLevel: 'warn' })
 const loading = ref(false)
 const saving = ref(false)
@@ -100,7 +101,8 @@ const logTable = ref(null)
 const sourceFilter = ref('')
 const levelFilter = ref('')
 const autoScroll = ref(true)
-const filterHealthLogs = ref(true)
+const FILTER_HEALTH_KEY = 'logs.filterHealthLogs'
+const filterHealthLogs = ref(localStorage.getItem(FILTER_HEALTH_KEY) !== '0')
 const paused = ref(false)
 const logStats = ref({ capacity: 2048, count: 0, dropped: 0 })
 let logStream = null
@@ -114,6 +116,16 @@ const isHealthLog = (entry) => {
     return field === '/health' || field.startsWith('/health?')
   })
 }
+
+const entryMatchesFilter = (entry) => {
+  if (sourceFilter.value && entry.source !== sourceFilter.value) return false
+  const rank = LEVEL_RANKS[entry.level] ?? -1
+  return rank >= (LEVEL_RANKS[levelFilter.value] ?? 0)
+}
+
+watch(filterHealthLogs, value => {
+  localStorage.setItem(FILTER_HEALTH_KEY, value ? '1' : '0')
+})
 
 const visibleLogs = computed(() => {
   const filtered = filterHealthLogs.value
@@ -183,6 +195,11 @@ const clearLogs = async () => {
 
 const startLogStream = () => {
 	if (logStream) logStream.close()
+	pendingEntries = []
+	if (flushFrame) {
+		cancelAnimationFrame(flushFrame)
+		flushFrame = 0
+	}
 	const params = new URLSearchParams()
 	if (levelFilter.value) params.set('level', levelFilter.value)
 	if (sourceFilter.value) params.set('source', sourceFilter.value)
@@ -204,8 +221,9 @@ const startLogStream = () => {
 const flushPendingEntries = () => {
 	flushFrame = 0
 	if (!pendingEntries.length) return
-	const entries = pendingEntries
+	const entries = pendingEntries.filter(entryMatchesFilter)
 	pendingEntries = []
+	if (!entries.length) return
   logs.value = [...logs.value, ...entries].slice(-LOG_BUFFER_SIZE)
 	if (autoScroll.value) {
 		nextTick(() => logTable.value?.setScrollTop(Number.MAX_SAFE_INTEGER))

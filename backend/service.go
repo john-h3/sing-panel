@@ -34,6 +34,9 @@ command_args="run --listen %s --data-dir %s"
 command_background=true
 pidfile="/run/sing-panel.pid"
 directory="%s"
+# Graceful shutdown closes SSE streams and the embedded kernel; if it still
+# exceeds 10s, escalate to SIGKILL instead of failing the stop action.
+start_stop_daemon_args="--retry TERM/10/KILL/5"
 
 depend() {
     need net

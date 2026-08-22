@@ -99,4 +99,23 @@ const router = createRouter({
   routes
 })
 
+// Lazy-loaded views are separate JS chunks. If the panel backend restarts or
+// is redeployed while a page stays open, the old chunk graph disappears and
+// navigating to a not-yet-visited view fails to import its module, leaving
+// every subsequent menu click dead until a full reload. Detect that case and
+// reload once so the browser fetches the fresh index.html and its chunks.
+const CHUNK_LOAD_ERROR =
+  /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i
+let reloadingForChunkError = false
+
+router.onError((error, to) => {
+  if (!CHUNK_LOAD_ERROR.test(String(error?.message || error))) {
+    console.error('[router]', error)
+    return
+  }
+  if (reloadingForChunkError || !to) return
+  reloadingForChunkError = true
+  window.location.replace(router.resolve(to).fullPath)
+})
+
 export default router
