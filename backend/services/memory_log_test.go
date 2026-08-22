@@ -3,6 +3,7 @@ package services
 import (
 	"strings"
 	"testing"
+	"time"
 
 	boxlog "github.com/sagernet/sing-box/log"
 )
@@ -49,6 +50,7 @@ func TestBoxLevelName(t *testing.T) {
 func TestMemoryLogRingTruncatesAndFilters(t *testing.T) {
 	ring := NewMemoryLogRing()
 	longMessage := strings.Repeat("a", MemoryLogMaxBytes+100)
+	ring.Append("trace", "singbox", "trace detail")
 	ring.Append("debug", "panel", longMessage)
 	ring.Append("error", "singbox", "failure")
 
@@ -60,6 +62,18 @@ func TestMemoryLogRingTruncatesAndFilters(t *testing.T) {
 	entries = ring.Recent(10, "debug", "panel")
 	if len(entries) != 1 || len(entries[0].Message) != MemoryLogMaxBytes {
 		t.Fatalf("truncated message length = %d, want %d", len(entries[0].Message), MemoryLogMaxBytes)
+	}
+
+	for _, level := range []string{"debug", "info", "warn", "error"} {
+		entries = ring.Recent(10, level, "singbox")
+		if len(entries) != 1 || entries[0].Level != "error" {
+			t.Fatalf("level %q filtered entries = %+v, want only error", level, entries)
+		}
+	}
+
+	entries = ring.Recent(10, "", "singbox")
+	if len(entries) != 2 || entries[0].Level != "trace" || entries[1].Level != "error" {
+		t.Fatalf("unfiltered entries = %+v, want trace and error", entries)
 	}
 }
 
@@ -80,5 +94,28 @@ func TestMemoryLogRingSubscription(t *testing.T) {
 		}
 	default:
 		t.Fatal("subscription channel was not closed")
+	}
+}
+
+func TestMemoryLogRingSubscriptionFiltersTraceForSelectedLevels(t *testing.T) {
+	for _, level := range []string{"debug", "info", "warn", "error"} {
+		ring := NewMemoryLogRing()
+		client, unsubscribe := ring.SubscribeFiltered(level, "singbox")
+		ring.Append("trace", "singbox", "trace detail")
+		select {
+		case entry := <-client:
+			t.Fatalf("level %q unexpectedly received trace entry = %+v", level, entry)
+		default:
+		}
+		ring.Append("error", "singbox", "failure")
+		select {
+		case entry := <-client:
+			if entry.Level != "error" {
+				t.Fatalf("level %q subscription entry = %+v, want error entry", level, entry)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("level %q did not receive error entry", level)
+		}
+		unsubscribe()
 	}
 }

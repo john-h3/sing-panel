@@ -8,7 +8,7 @@
 - 完整的 sing-box 配置管理（Inbound / Outbound / Ruleset / 路由规则 / DNS / 服务 / HTTP 客户端 / Experimental）
 - **TProxy 透明代理**：启用 tproxy inbound 后，自动通过 nftables/netlink 系统调用配置防火墙规则（无需安装 iptables/nft/ip 命令行工具），客户端网关指向本机即可透明代理；停止内核时自动清理规则
 - 支持从订阅链接导入配置、GitHub GEO 规则树自动刷新
-- 实时状态监控（内存 / 协程 / GC / 运行时长）
+- 实时状态监控（内存 / 协程 / GC / 运行时长 / 构建时间）
 - 健康检查接口：根据嵌入式 sing-box 内核是否运行返回 HTTP 200 / 400
 - 日志管理：统一查看面板、Gin 和 sing-box 日志，支持实时 SSE 推送、暂停/恢复和级别筛选
 - 数据库导出 / 导入
@@ -43,9 +43,16 @@ npm run dev
 
 ```bash
 chmod +x build.sh
-./build.sh
-./build/sing-panel
+./build.sh                 # 交互式选择目标架构
+./build.sh linux/arm64     # 直接指定目标架构，跳过交互
+./build/sing-panel         # 当前平台产物；交叉编译产物为 build/sing-panel-<os>-<arch>
 ```
+
+支持的目标架构可用 `./build.sh --help` 查看（linux amd64/arm64/armv7、darwin、windows）。
+
+`build.sh` 会根据前端源码、依赖锁文件和 Vite 配置的内容缓存前端构建结果；输入未变化时会复用 `frontend/dist`，跳过 `npm install` 和前端打包。前端重新构建时使用 npm 本地缓存，并关闭 audit 和 fund 请求以缩短构建时间。需要强制重新构建前端时，删除 `build/frontend.sha256` 和 `frontend/dist/` 即可。
+
+默认只生成 gzip 压缩资源。如需额外生成 Brotli 资源，使用 `./build.sh linux/arm64 --brotli`；Brotli 模式会单独缓存，不会与默认模式混用。
 
 ### 启动脚本
 
@@ -67,25 +74,9 @@ chmod +x build.sh
 cd backend && go run . --data-dir ./data   # 开发模式
 ```
 
-### 多环境部署
+### 部署
 
-根目录的 `deploy_all.sh` 用于将 ARM64 版本依次部署到 test 和 prod 环境。脚本只编译一次，流程为：
-
-```text
-前端构建 + Go 编译（linux/arm64）
-→ 部署并验证 test
-→ 等待 3 秒
-→ 部署并验证 prod
-```
-
-执行：
-
-```bash
-chmod +x deploy_all.sh
-./deploy_all.sh
-```
-
-部署脚本会将新二进制先上传为临时文件，停止旧服务后再原子替换实际的 OpenRC 执行文件；停止时会校验进程并在必要时使用 TERM/KILL，启动后会检查服务进程是否仍在运行。部署脚本默认使用脚本内配置的远端地址，执行前请确认 SSH 免密登录和目标环境配置正确。
+`deploy_test.sh` 和 `deploy_prod.sh` 会先调用 `build.sh linux/arm64` 构建 ARM64 版本，再将新二进制上传为临时文件，停止旧服务后原子替换实际的 OpenRC 执行文件；停止时会校验进程并在必要时使用 TERM/KILL，启动后会检查服务进程是否仍在运行。部署脚本默认使用脚本内配置的远端地址，执行前请确认 SSH 免密登录和目标环境配置正确。
 
 > 部署脚本匹配 `deploy_*.sh`，默认由 Git 忽略，不会被纳入版本跟踪。
 

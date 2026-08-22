@@ -22,6 +22,7 @@
             </div>
             <div class="status-info">
               <p><strong>版本:</strong> {{ status.version || '未知' }}</p>
+              <p><strong>构建时间:</strong> {{ systemInfo.buildTime || '未知' }}</p>
             </div>
           </div>
         </el-card>

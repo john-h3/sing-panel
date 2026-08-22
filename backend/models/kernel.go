@@ -13,6 +13,7 @@ type SystemInfo struct {
 	Arch          string `json:"arch"`
 	Hostname      string `json:"hostname"`
 	KernelVersion string `json:"kernelVersion"`
+	BuildTime     string `json:"buildTime"`
 }
 
 // KernelState represents the runtime state stored in database

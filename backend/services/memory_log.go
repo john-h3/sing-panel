@@ -152,7 +152,7 @@ func (r *MemoryLogRing) recentLocked(afterSeq uint64, limit int, level, source s
 }
 
 // logLevelMatches treats the selected level as a minimum severity. An empty
-// filter accepts every level; trace is below debug, as in slog/sing-box.
+// filter accepts every level, including trace.
 func logLevelMatches(entryLevel, selectedLevel string) bool {
 	if selectedLevel == "" {
 		return true

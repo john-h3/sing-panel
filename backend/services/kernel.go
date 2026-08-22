@@ -93,6 +93,7 @@ func (s *KernelService) GetSystemInfo() models.SystemInfo {
 		Arch:          runtime.GOARCH,
 		Hostname:      hostname,
 		KernelVersion: getKernelVersion(),
+		BuildTime:     BuildTime,
 	}
 }
 
