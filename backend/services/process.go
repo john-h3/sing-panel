@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"sing_panel/models"
+	"sing-panel/models"
 )
 
 type ProcessService struct {

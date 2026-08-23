@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"sing_panel/models"
+	"sing-panel/models"
 )
 
 // singBoxVersion returns the sing-box kernel version compiled into this

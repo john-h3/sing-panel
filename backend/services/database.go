@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"sing_panel/models"
+	"sing-panel/models"
 
 	bolt "go.etcd.io/bbolt"
 )

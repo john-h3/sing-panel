@@ -3,7 +3,7 @@ package services
 import (
 	"testing"
 
-	"sing_panel/models"
+	"sing-panel/models"
 )
 
 func TestDisableCustomizedOutbounds(t *testing.T) {

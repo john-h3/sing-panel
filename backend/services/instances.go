@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"sing_panel/models"
+	"sing-panel/models"
 
 	"github.com/google/uuid"
 )
@@ -559,18 +559,18 @@ func (s *InstanceService) LocalPanelInfo() models.PanelInfo {
 
 // ConfigDiffItem represents a single configuration difference.
 type ConfigDiffItem struct {
-	Bucket    string `json:"bucket"`
-	Key       string `json:"key"`
+	Bucket      string `json:"bucket"`
+	Key         string `json:"key"`
 	LocalValue  string `json:"localValue"`
 	RemoteValue string `json:"remoteValue"`
-	Type      string `json:"type"` // "added", "removed", "modified"
+	Type        string `json:"type"` // "added", "removed", "modified"
 }
 
 // ConfigDiffResult represents the full diff between local and remote configs.
 type ConfigDiffResult struct {
-	Differences []ConfigDiffItem `json:"differences"`
-	LocalFingerprint  string     `json:"localFingerprint"`
-	RemoteFingerprint string     `json:"remoteFingerprint"`
+	Differences       []ConfigDiffItem `json:"differences"`
+	LocalFingerprint  string           `json:"localFingerprint"`
+	RemoteFingerprint string           `json:"remoteFingerprint"`
 }
 
 // ComputeConfigDiff compares local and remote exports and returns the differences.

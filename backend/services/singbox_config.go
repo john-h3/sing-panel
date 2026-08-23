@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode"
 
-	"sing_panel/models"
+	"sing-panel/models"
 
 	"github.com/google/uuid"
 )

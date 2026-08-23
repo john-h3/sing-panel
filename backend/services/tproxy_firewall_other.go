@@ -2,7 +2,7 @@
 
 package services
 
-import "sing_panel/models"
+import "sing-panel/models"
 
 // setupTproxyFirewall is a no-op on non-Linux platforms where tproxy firewall
 // traffic steering is unsupported.

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"sing_panel/models"
-	"sing_panel/services"
+	"sing-panel/models"
+	"sing-panel/services"
 
 	"github.com/gin-gonic/gin"
 )

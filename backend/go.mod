@@ -1,4 +1,4 @@
-module sing_panel
+module sing-panel
 
 go 1.25.5
 

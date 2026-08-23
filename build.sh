@@ -147,7 +147,7 @@ echo "Building backend for ${GOOS:-$(go env GOOS)}/${GOARCH:-$(go env GOARCH)}..
 cd "$SCRIPT_DIR/backend"
 go mod tidy
 BUILD_TIME="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-LDFLAGS="-X sing_panel/services.BuildTime=$BUILD_TIME"
+LDFLAGS="-X sing-panel/services.BuildTime=$BUILD_TIME"
 if [ -n "$GOOS" ]; then
   CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH ${GOARM:+GOARM=$GOARM} go build -tags "with_utls with_quic with_gvisor with_clash_api" -ldflags "$LDFLAGS" -o "$BUILD_DIR/$OUTPUT" .
 else

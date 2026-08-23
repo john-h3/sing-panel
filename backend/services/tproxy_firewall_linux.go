@@ -16,15 +16,15 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"sing_panel/models"
+	"sing-panel/models"
 )
 
 const (
-	tproxyNftTableName  = "sing_panel"
-	tproxyNftChainName  = "prerouting"
-	tproxyRouteTable    = 100
-	tproxyRulePriority  = 100
-	tproxyMark          = 1
+	tproxyNftTableName = "sing_panel"
+	tproxyNftChainName = "prerouting"
+	tproxyRouteTable   = 100
+	tproxyRulePriority = 100
+	tproxyMark         = 1
 )
 
 const (

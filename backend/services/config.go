@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"sing_panel/models"
+	"sing-panel/models"
 )
 
 type ConfigService struct {

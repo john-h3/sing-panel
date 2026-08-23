@@ -3,7 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"sing_panel/services"
+	"sing-panel/services"
 
 	"github.com/gin-gonic/gin"
 )

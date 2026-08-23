@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"sing_panel/services"
+	"sing-panel/services"
 )
 
 // Gin does not expose a runtime log level. Filter its normal access output

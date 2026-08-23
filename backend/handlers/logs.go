@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"sing_panel/services"
+	"sing-panel/services"
 
 	"github.com/gin-gonic/gin"
 )

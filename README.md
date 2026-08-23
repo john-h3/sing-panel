@@ -187,7 +187,7 @@ curl -i http://127.0.0.1:8080/health
 ## 项目结构
 
 ```
-sing_panel/
+sing-panel/
 ├── backend/           # Go 后端
 │   ├── main.go       # 入口文件
 │   ├── handlers/     # HTTP 处理器
