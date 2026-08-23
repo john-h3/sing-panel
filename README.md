@@ -6,6 +6,8 @@
 
 - 嵌入 sing-box 内核（libbox），开箱即用，无需单独下载内核
 - 完整的 sing-box 配置管理（Inbound / Outbound / Ruleset / 路由规则 / DNS / 服务 / HTTP 客户端 / Experimental）
+- **定制化 Outbound**：支持 fork 提供的 `fallback` 和 `loadbalance`，可拖拽调整出站顺序；LoadBalance 支持轮询、随机、加权、最少连接和一致性哈希策略
+- **定制化功能开关**：开关位于面板 `app_config` 中，不会下发给 sing-box；关闭时定制化 Outbound 仍可创建、编辑和删除，但不能启用，已有相关状态会自动关闭
 - **TProxy 透明代理**：启用 tproxy inbound 后，自动通过 nftables/netlink 系统调用配置防火墙规则（无需安装 iptables/nft/ip 命令行工具），客户端网关指向本机即可透明代理；停止内核时自动清理规则
 - 支持从订阅链接导入配置、GitHub GEO 规则树自动刷新
 - 实时状态监控（内存 / 协程 / GC / 运行时长 / 构建时间）
@@ -111,6 +113,15 @@ curl -i http://127.0.0.1:8080/health
 
 一致性判断基于导出的配置数据：`config` 与 `singbox` 两个 bucket（排除 GEO 规则树缓存）；各面板本机的运行状态、managed instances、同步令牌不参与比对。
 
+## 定制化 Outbound
+
+面板支持当前 fork 中提供的两个定制化 Outbound：
+
+- **Fallback**：按配置顺序尝试出站，直到连接成功；支持拖拽调整尝试顺序。
+- **LoadBalance**：按策略选择出站；支持 `round_robin`、`random`、`weighted_round_robin`、`weighted_random`、`least_connections` 和 `consistent_hash`，并可配置每个出站的权重。
+
+在「Singbox → Experimental」中开启「定制化功能」后，已启用的定制化 Outbound 才会导出给内核。该开关存储在面板自身的 `config/app_config` 中，而不是 sing-box 的 `experimental` 配置中。关闭开关时，面板会自动禁用所有 `fallback` 和 `loadbalance`，并清理它们在路由中的引用。
+
 ## TProxy 透明代理
 
 1. 在「Singbox → Inbound」中新增类型为 **TProxy** 的入站，配置监听地址（默认 `0.0.0.0`）、监听端口（如 `5678`）和网络（`tcp` / `udp` / 自动 TCP+UDP）
@@ -191,4 +202,12 @@ sing_panel/
 └── build.sh          # 构建脚本
 ```
 
-> sing-box 内核以 Go 模块依赖引入（`backend/go.mod` 中 require），源码可在模块缓存中查看：`$(go env GOMODCACHE)/github.com/sagernet/sing-box@v1.14.0-beta.15/`。如需修改内核，请 fork 后在 go.mod 中 replace 到自己的 fork。
+> sing-box 内核以 Go 模块依赖引入。面板保留官方模块路径的 import，并通过 `backend/go.mod` 中的远程 `replace` 使用 fork，例如：
+>
+> ```go
+> require github.com/sagernet/sing-box v1.14.0-beta.15
+>
+> replace github.com/sagernet/sing-box => github.com/john-h3/sing-box v0.0.0-20260823071457-150e69f5c9f8
+> ```
+>
+> fork 更新后，在 `backend/` 目录执行 `go mod edit -replace=github.com/sagernet/sing-box=github.com/john-h3/sing-box@<提交哈希>`，再运行 `GOPROXY=direct go mod tidy` 和 `go test ./...`。不要执行 `go get github.com/sagernet/sing-box@testing`，它会拉取官方仓库而不是 fork。

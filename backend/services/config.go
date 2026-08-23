@@ -61,6 +61,12 @@ func (s *ConfigService) Update(req models.ConfigUpdateRequest) error {
 	if req.AutoStartKernel != nil {
 		s.conf.AutoStartKernel = *req.AutoStartKernel
 	}
+	if req.CustomizedFeaturesEnabled != nil {
+		s.conf.CustomizedFeaturesEnabled = *req.CustomizedFeaturesEnabled
+		if !s.conf.CustomizedFeaturesEnabled {
+			s.disableCustomizedOutbounds()
+		}
+	}
 	if req.LogLevel != nil {
 		if err := GetBoxService().SetLogLevel(logLevel); err != nil {
 			return err
@@ -69,6 +75,19 @@ func (s *ConfigService) Update(req models.ConfigUpdateRequest) error {
 	}
 	s.saveToDB()
 	return nil
+}
+
+// disableCustomizedOutbounds disables fork-only outbounds when the panel
+// feature switch is turned off through the app configuration API.
+func (s *ConfigService) disableCustomizedOutbounds() {
+	var config models.SingBoxConfig
+	if err := s.db.Get("singbox", "config", &config); err != nil {
+		return
+	}
+	disableCustomizedOutbounds(&config)
+	if err := s.db.Put("singbox", "config", config); err != nil {
+		slog.Error("customized outbound state save failed", "error", err)
+	}
 }
 
 func (s *ConfigService) loadFromDB() {

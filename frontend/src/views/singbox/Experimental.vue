@@ -26,6 +26,14 @@
           </el-form-item>
         </template>
 
+        <!-- Customized fork features -->
+        <el-divider content-position="left">定制化功能</el-divider>
+
+        <el-form-item label="启用定制化功能">
+          <el-switch v-model="customizedEnabled" />
+          <div class="form-tip">启用后才会向内核下发 fallback 等 fork 独有功能。</div>
+        </el-form-item>
+
         <!-- Clash API Section -->
         <el-divider content-position="left">Clash API</el-divider>
 
@@ -81,6 +89,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { singboxApi } from '../../api/singbox'
+import { configApi } from '../../api/config'
 import { Setting, Check } from '@element-plus/icons-vue'
 
 const form = ref({
@@ -101,6 +110,7 @@ const form = ref({
 const outbounds = ref([])
 const loading = ref(false)
 const saving = ref(false)
+const customizedEnabled = ref(false)
 
 // Computed helpers for pointer fields
 const cacheFileEnabled = computed({
@@ -116,9 +126,10 @@ const clashAPIAllowPrivateNetwork = computed({
 const loadConfig = async () => {
   loading.value = true
   try {
-    const [expRes, outRes] = await Promise.all([
+    const [expRes, outRes, appRes] = await Promise.all([
       singboxApi.getExperimental(),
-      singboxApi.getOutbounds()
+      singboxApi.getOutbounds(),
+      configApi.get()
     ])
     if (expRes.data.success) {
       const data = expRes.data.data || {}
@@ -141,6 +152,9 @@ const loadConfig = async () => {
     if (outRes.data.success) {
       outbounds.value = outRes.data.data || []
     }
+    if (appRes.data.success) {
+      customizedEnabled.value = appRes.data.data?.customizedFeaturesEnabled === true
+    }
   } catch (err) {
     ElMessage.error('加载配置失败')
   } finally {
@@ -153,6 +167,7 @@ const saveConfig = async () => {
   try {
     const res = await singboxApi.updateExperimental(form.value)
     if (res.data.success) {
+      await configApi.update({ customizedFeaturesEnabled: customizedEnabled.value })
       ElMessage.success('配置已保存')
     }
   } catch (err) {

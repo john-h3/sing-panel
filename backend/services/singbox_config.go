@@ -29,7 +29,34 @@ type SingBoxConfigService struct {
 	configService   *ConfigService
 }
 
+// customizedOutboundTypes contains outbound types implemented only by the
+// customized sing-box fork. Keep this list centralized so newly added fork
+// features get the same enablement rules as fallback.
+var customizedOutboundTypes = map[string]struct{}{
+	"fallback":    {},
+	"loadbalance": {},
+}
+
+func isCustomizedOutboundType(outboundType string) bool {
+	_, ok := customizedOutboundTypes[outboundType]
+	return ok
+}
+
+func customizedFeaturesEnabled(config models.AppConfig) bool {
+	return config.CustomizedFeaturesEnabled
+}
+
+func disableCustomizedOutbounds(config *models.SingBoxConfig) {
+	for i := range config.Outbounds {
+		if isCustomizedOutboundType(config.Outbounds[i].Type) {
+			config.Outbounds[i].Enabled = false
+			removeOutboundRouteReferences(config, config.Outbounds[i].Tag)
+		}
+	}
+}
+
 func NewSingBoxConfigService(db *Database, configService *ConfigService) *SingBoxConfigService {
+	migrateCustomizedFeatureSwitch(db, configService)
 	s := &SingBoxConfigService{
 		db:            db,
 		configService: configService,
@@ -37,6 +64,50 @@ func NewSingBoxConfigService(db *Database, configService *ConfigService) *SingBo
 	// Load cached trees from DB on startup
 	s.loadTreeCacheFromDB()
 	return s
+}
+
+// migrateCustomizedFeatureSwitch moves the old sing-box experimental switch
+// into app_config. The old field is accepted only long enough to migrate
+// existing databases and is removed from the sing-box configuration.
+func migrateCustomizedFeatureSwitch(db *Database, configService *ConfigService) {
+	var raw map[string]json.RawMessage
+	if err := db.Get("singbox", "config", &raw); err != nil {
+		return
+	}
+
+	var experimental struct {
+		Customized *struct {
+			Enabled bool `json:"enabled"`
+		} `json:"customized"`
+	}
+	if rawExperimental, ok := raw["experimental"]; ok {
+		if err := json.Unmarshal(rawExperimental, &experimental); err != nil {
+			slog.Warn("customized feature migration skipped", "error", err)
+			return
+		}
+	}
+	if experimental.Customized != nil {
+		if experimental.Customized.Enabled && !configService.Get().CustomizedFeaturesEnabled {
+			enabled := true
+			_ = configService.Update(models.ConfigUpdateRequest{CustomizedFeaturesEnabled: &enabled})
+		}
+
+		var experimentalRaw map[string]json.RawMessage
+		if err := json.Unmarshal(raw["experimental"], &experimentalRaw); err != nil {
+			slog.Error("customized feature migration failed", "error", err)
+			return
+		}
+		delete(experimentalRaw, "customized")
+		experimentalData, err := json.Marshal(experimentalRaw)
+		if err != nil {
+			slog.Error("customized feature migration failed", "error", err)
+			return
+		}
+		raw["experimental"] = experimentalData
+		if err := db.Put("singbox", "config", raw); err != nil {
+			slog.Error("customized feature migration failed", "error", err)
+		}
+	}
 }
 
 // Tree cache types
@@ -420,6 +491,9 @@ func (s *SingBoxConfigService) AddOutbound(outbound models.Outbound) (models.Out
 	if outbound.ID == "" {
 		outbound.ID = uuid.New().String()
 	}
+	if isCustomizedOutboundType(outbound.Type) && !customizedFeaturesEnabled(s.configService.Get()) {
+		outbound.Enabled = false
+	}
 
 	config.Outbounds = append(config.Outbounds, outbound)
 
@@ -443,6 +517,9 @@ func (s *SingBoxConfigService) UpdateOutbound(outbound models.Outbound) (models.
 
 	for i, item := range config.Outbounds {
 		if item.ID == outbound.ID {
+			if isCustomizedOutboundType(outbound.Type) && !customizedFeaturesEnabled(s.configService.Get()) {
+				outbound.Enabled = false
+			}
 			config.Outbounds[i] = outbound
 			if item.Enabled && !outbound.Enabled {
 				removeOutboundRouteReferences(&config, outbound.Tag)
@@ -1192,7 +1269,7 @@ func (s *SingBoxConfigService) ExportConfig() (map[string]interface{}, error) {
 			"level": "info",
 		},
 		"inbounds":  s.buildInbounds(config.Inbounds),
-		"outbounds": s.buildOutbounds(config.Outbounds),
+		"outbounds": s.buildOutbounds(config.Outbounds, customizedFeaturesEnabled(s.configService.Get())),
 		"route":     routeSection,
 	}
 
@@ -1300,10 +1377,16 @@ func (s *SingBoxConfigService) buildInbounds(inbounds []models.Inbound) []map[st
 	return result
 }
 
-func (s *SingBoxConfigService) buildOutbounds(outbounds []models.Outbound) []map[string]interface{} {
+func (s *SingBoxConfigService) buildOutbounds(outbounds []models.Outbound, customizedEnabled bool) []map[string]interface{} {
 	var result []map[string]interface{}
 	for _, outbound := range outbounds {
 		if !outbound.Enabled {
+			continue
+		}
+		// Do not trust persisted state alone. This also protects the kernel from
+		// customized outbounds in configurations written before the feature
+		// switch was introduced or modified outside the API.
+		if isCustomizedOutboundType(outbound.Type) && !customizedEnabled {
 			continue
 		}
 		item := map[string]interface{}{
@@ -1764,6 +1847,8 @@ func (s *SingBoxConfigService) GetDefaultOutboundTypes() []map[string]string {
 		{"type": "vless", "name": "VLESS"},
 		{"type": "trojan", "name": "Trojan"},
 		{"type": "hysteria", "name": "Hysteria"},
+		{"type": "fallback", "name": "Fallback（定制化）"},
+		{"type": "loadbalance", "name": "LoadBalance（定制化）"},
 	}
 }
 

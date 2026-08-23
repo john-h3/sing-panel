@@ -27,6 +27,7 @@
           <template #default="{ row }">
             <el-switch
               v-model="row.enabled"
+              :disabled="isCustomizedOutbound(row) && !customizedEnabled"
               @change="toggleEnabled(row)"
               size="small"
             />
@@ -68,7 +69,10 @@
         </el-form-item>
 
         <el-form-item label="启用">
-          <el-switch v-model="form.enabled" />
+          <el-switch
+            v-model="form.enabled"
+            :disabled="isCustomizedOutbound(form) && !customizedEnabled"
+          />
         </el-form-item>
 
         <!-- Dynamic options based on type -->
@@ -244,6 +248,113 @@
           </el-form-item>
         </template>
 
+        <template v-if="form.type === 'fallback'">
+          <el-divider content-position="left">Fallback 出站</el-divider>
+          <el-form-item label="出站列表">
+            <div class="outbound-list-container">
+              <div class="selected-outbounds" v-if="form.options.outbounds && form.options.outbounds.length > 0">
+                <div
+                  v-for="(tag, index) in form.options.outbounds"
+                  :key="tag"
+                  class="outbound-item"
+                  draggable="true"
+                  @dragstart="onDragStart(index)"
+                  @dragover.prevent="onDragOver(index)"
+                  @drop="onDrop(index)"
+                  @dragend="onDragEnd"
+                  :class="{ 'dragging': dragIndex === index }"
+                >
+                  <span class="drag-handle">⋮⋮</span>
+                  <span class="outbound-tag">{{ tag }}</span>
+                  <el-button type="danger" link size="small" @click="removeOutbound(index)">
+                    <el-icon><Close /></el-icon>
+                  </el-button>
+                </div>
+              </div>
+              <div v-else class="empty-outbounds">暂无出站，请添加</div>
+              <el-select
+                v-model="addOutboundValue"
+                placeholder="添加出站"
+                @change="addOutbound"
+                style="width: 100%; margin-top: 8px;"
+                clearable
+              >
+                <el-option
+                  v-for="ob in availableOutboundsToAdd"
+                  :key="ob.tag"
+                  :label="ob.tag"
+                  :value="ob.tag"
+                />
+              </el-select>
+            </div>
+          </el-form-item>
+          <div class="form-tip">按顺序尝试列表中的出站，定制化功能关闭时该出站会被禁用。</div>
+        </template>
+
+        <template v-if="form.type === 'loadbalance'">
+          <el-divider content-position="left">LoadBalance 出站</el-divider>
+          <el-form-item label="出站列表">
+            <div class="outbound-list-container">
+              <div class="selected-outbounds" v-if="form.options.outbounds && form.options.outbounds.length > 0">
+                <div
+                  v-for="(tag, index) in form.options.outbounds"
+                  :key="tag"
+                  class="outbound-item"
+                  draggable="true"
+                  @dragstart="onDragStart(index)"
+                  @dragover.prevent="onDragOver(index)"
+                  @drop="onDrop(index)"
+                  @dragend="onDragEnd"
+                  :class="{ 'dragging': dragIndex === index }"
+                >
+                  <span class="drag-handle">⋮⋮</span>
+                  <span class="outbound-tag">{{ tag }}</span>
+                  <el-input-number
+                    :model-value="getLoadBalanceWeight(tag)"
+                    :min="1"
+                    :max="65535"
+                    :precision="0"
+                    controls-position="right"
+                    size="small"
+                    class="loadbalance-weight"
+                    @update:model-value="setLoadBalanceWeight(tag, $event)"
+                  />
+                  <el-button type="danger" link size="small" @click="removeOutbound(index)">
+                    <el-icon><Close /></el-icon>
+                  </el-button>
+                </div>
+              </div>
+              <div v-else class="empty-outbounds">暂无出站，请添加</div>
+              <el-select
+                v-model="addOutboundValue"
+                placeholder="添加出站"
+                @change="addOutbound"
+                style="width: 100%; margin-top: 8px;"
+                clearable
+              >
+                <el-option
+                  v-for="ob in availableOutboundsToAdd"
+                  :key="ob.tag"
+                  :label="ob.tag"
+                  :value="ob.tag"
+                />
+              </el-select>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="选择策略">
+            <el-select v-model="form.options.strategy" placeholder="round_robin">
+              <el-option label="轮询 (round_robin)" value="round_robin" />
+              <el-option label="随机 (random)" value="random" />
+              <el-option label="加权轮询 (weighted_round_robin)" value="weighted_round_robin" />
+              <el-option label="加权随机 (weighted_random)" value="weighted_random" />
+              <el-option label="最少连接 (least_connections)" value="least_connections" />
+              <el-option label="一致性哈希 (consistent_hash)" value="consistent_hash" />
+            </el-select>
+          </el-form-item>
+          <div class="form-tip">按顺序拖动出站列表可调整配置顺序；权重用于加权策略，未填写时默认为 1。</div>
+        </template>
+
         <!-- Selector/URLTest: select outbounds -->
         <template v-if="form.type === 'selector' || form.type === 'urltest'">
           <el-divider content-position="left">出站选择</el-divider>
@@ -374,6 +485,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { singboxApi } from '../../api/singbox'
+import { configApi } from '../../api/config'
 import { Download, Plus, Upload, Close } from '@element-plus/icons-vue'
 
 const outbounds = ref([])
@@ -387,6 +499,8 @@ const editingOutbound = ref(null)
 const outboundTypes = ref([])
 const networkInterfaces = ref([])
 const formRef = ref(null)
+const customizedEnabled = ref(false)
+const customizedOutboundTypes = new Set(['fallback', 'loadbalance'])
 
 // VLESS helper fields
 const vlessSecurity = ref('')
@@ -400,6 +514,8 @@ const form = ref({
   enabled: true,
   options: {}
 })
+
+const isCustomizedOutbound = (outbound) => customizedOutboundTypes.has(outbound?.type)
 
 // Watch for outbounds list changes to sync default outbound
 watch(() => form.value.options.outbounds, (newOutbounds, oldOutbounds) => {
@@ -463,6 +579,10 @@ const addOutbound = (tag) => {
   }
   if (!form.value.options.outbounds.includes(tag)) {
     form.value.options.outbounds.push(tag)
+    if (form.value.type === 'loadbalance') {
+      if (!form.value.options.weights) form.value.options.weights = {}
+      form.value.options.weights[tag] = 1
+    }
   }
   addOutboundValue.value = ''
 }
@@ -470,8 +590,21 @@ const addOutbound = (tag) => {
 // Remove outbound from list
 const removeOutbound = (index) => {
   if (form.value.options.outbounds) {
+    const tag = form.value.options.outbounds[index]
     form.value.options.outbounds.splice(index, 1)
+    if (form.value.type === 'loadbalance' && form.value.options.weights) {
+      delete form.value.options.weights[tag]
+    }
   }
+}
+
+const getLoadBalanceWeight = (tag) => {
+  return form.value.options.weights?.[tag] || 1
+}
+
+const setLoadBalanceWeight = (tag, value) => {
+  if (!form.value.options.weights) form.value.options.weights = {}
+  form.value.options.weights[tag] = Number(value) > 0 ? Number(value) : 1
 }
 
 const rules = {
@@ -592,6 +725,17 @@ const loadOutbounds = async () => {
   }
 }
 
+const loadExperimental = async () => {
+  try {
+    const res = await configApi.get()
+    if (res.data.success) {
+      customizedEnabled.value = res.data.data?.customizedFeaturesEnabled === true
+    }
+  } catch (err) {
+    console.error('Failed to load experimental config:', err)
+  }
+}
+
 const loadTypes = async () => {
   try {
     const res = await singboxApi.getOutboundTypes()
@@ -639,7 +783,9 @@ const outboundTypeFields = {
   direct: ['bind_interface'],
   block: [],
   selector: ['outbounds', 'default'],
-  urltest: ['outbounds', 'default', 'url', 'interval', 'tolerance']
+  urltest: ['outbounds', 'default', 'url', 'interval', 'tolerance'],
+  fallback: ['outbounds'],
+  loadbalance: ['outbounds', 'strategy', 'weights']
 }
 
 const editOutbound = (outbound) => {
@@ -883,6 +1029,7 @@ onMounted(() => {
   loadOutbounds()
   loadTypes()
   loadNetworkInterfaces()
+  loadExperimental()
 })
 </script>
 
