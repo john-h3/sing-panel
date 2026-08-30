@@ -51,11 +51,14 @@ jobs:
           chmod +x build.sh
           ./build.sh '${{ matrix.target }}'
 
-      - name: Upload binary
+      - name: Package binary
+        run: tar -czf "build/${{ matrix.asset }}.tar.gz" -C build "${{ matrix.asset }}"
+
+      - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.asset }}
-          path: build/${{ matrix.asset }}
+          name: release-${{ matrix.asset }}.tar.gz
+          path: build/${{ matrix.asset }}.tar.gz
           if-no-files-found: error
           retention-days: 1
 
