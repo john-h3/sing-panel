@@ -52,7 +52,7 @@ chmod +x build.sh
 ./build/sing-panel         # 当前平台产物；交叉编译产物为 build/sing-panel-<os>-<arch>
 ```
 
-支持的目标架构可用 `./build.sh --help` 查看（linux amd64/arm64/armv7、darwin、windows）。
+支持的目标架构可用 `./build.sh --help` 查看（linux amd64/arm64、darwin arm64、windows amd64）。
 
 `build.sh` 会根据前端源码、依赖锁文件和 Vite 配置的内容缓存前端构建结果；输入未变化时会复用 `frontend/dist`，跳过 `npm install` 和前端打包。前端重新构建时使用 npm 本地缓存，并关闭 audit 和 fund 请求以缩短构建时间。需要强制重新构建前端时，删除 `build/frontend.sha256` 和 `frontend/dist/` 即可。
 
@@ -60,7 +60,7 @@ chmod +x build.sh
 
 ### GitHub Release
 
-仓库内置 GitHub Actions 发布流程。推送以 `v` 开头的 Git tag 后，Actions 会自动构建并创建同名 GitHub Release，上传 Linux（amd64、arm64、armv7）、macOS（amd64、arm64）和 Windows（amd64）二进制，同时生成 `SHA256SUMS` 校验文件。
+仓库内置 GitHub Actions 发布流程。推送以 `v` 开头的 Git tag 后，Actions 会自动构建并创建同名 GitHub Release，上传 Linux（amd64、arm64）、macOS（arm64）和 Windows（amd64）二进制，同时生成 `SHA256SUMS` 校验文件。
 
 ```bash
 git tag v1.0.0

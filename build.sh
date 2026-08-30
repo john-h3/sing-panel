@@ -10,7 +10,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # interactive prompt. With no target, keep the original interactive mode.
 GOOS=""
 GOARCH=""
-GOARM=""
 OUTPUT=""
 TARGET=""
 ENABLE_BROTLI=0
@@ -40,8 +39,6 @@ if [ "$TARGET" = "--help" ] || [ "$TARGET" = "-h" ]; then
   echo "  native         current platform (default in interactive mode)"
   echo "  linux/amd64"
   echo "  linux/arm64"
-  echo "  linux/arm/v7"
-  echo "  darwin/amd64"
   echo "  darwin/arm64"
   echo "  windows/amd64"
   echo ""
@@ -56,10 +53,8 @@ if [ -z "$TARGET" ]; then
   echo "  1) 当前平台 (不交叉编译)"
   echo "  2) linux/amd64    (Linux x64)"
   echo "  3) linux/arm64    (Linux ARM64)"
-  echo "  4) linux/arm/v7   (Linux ARMv7)"
-  echo "  5) darwin/amd64   (macOS x64)"
-  echo "  6) darwin/arm64   (macOS Apple Silicon)"
-  echo "  7) windows/amd64  (Windows x64)"
+  echo "  4) darwin/arm64   (macOS Apple Silicon)"
+  echo "  5) windows/amd64  (Windows x64)"
   echo ""
   read -p "输入序号 [1]: " choice
   choice=${choice:-1}
@@ -67,10 +62,8 @@ if [ -z "$TARGET" ]; then
     1) TARGET=native ;;
     2) TARGET=linux/amd64 ;;
     3) TARGET=linux/arm64 ;;
-    4) TARGET=linux/arm/v7 ;;
-    5) TARGET=darwin/amd64 ;;
-    6) TARGET=darwin/arm64 ;;
-    7) TARGET=windows/amd64 ;;
+    4) TARGET=darwin/arm64 ;;
+    5) TARGET=windows/amd64 ;;
     *) echo "无效选择"; exit 1 ;;
   esac
 fi
@@ -84,12 +77,6 @@ case "$TARGET" in
     ;;
   linux/arm64)
     GOOS=linux GOARCH=arm64 OUTPUT=sing-panel-linux-arm64
-    ;;
-  linux/arm/v7)
-    GOOS=linux GOARCH=arm GOARM=7 OUTPUT=sing-panel-linux-armv7
-    ;;
-  darwin/amd64)
-    GOOS=darwin GOARCH=amd64 OUTPUT=sing-panel-darwin-amd64
     ;;
   darwin/arm64)
     GOOS=darwin GOARCH=arm64 OUTPUT=sing-panel-darwin-arm64
@@ -149,7 +136,7 @@ go mod tidy
 BUILD_TIME="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 LDFLAGS="-X sing-panel/services.BuildTime=$BUILD_TIME"
 if [ -n "$GOOS" ]; then
-  CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH ${GOARM:+GOARM=$GOARM} go build -tags "with_utls with_quic with_gvisor with_clash_api" -ldflags "$LDFLAGS" -o "$BUILD_DIR/$OUTPUT" .
+  CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build -tags "with_utls with_quic with_gvisor with_clash_api" -ldflags "$LDFLAGS" -o "$BUILD_DIR/$OUTPUT" .
 else
   go build -tags "with_utls with_quic with_gvisor with_clash_api" -ldflags "$LDFLAGS" -o "$BUILD_DIR/$OUTPUT" .
 fi

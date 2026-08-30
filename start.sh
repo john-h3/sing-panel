@@ -61,7 +61,7 @@ pick_binary() {
     echo "$BASE_DIR/build/sing-panel"
     return
   fi
-  local arch_map="x86_64:amd64 aarch64:arm64 arm64:arm64 armv7l:armv7 armv6l:armv6"
+  local arch_map="x86_64:amd64 aarch64:arm64 arm64:arm64 armv6l:armv6"
   local machine
   machine="$(uname -m 2>/dev/null || echo unknown)"
   for pair in $arch_map; do

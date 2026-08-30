@@ -24,10 +24,6 @@ jobs:
             asset: sing-panel-linux-amd64
           - target: linux/arm64
             asset: sing-panel-linux-arm64
-          - target: linux/arm/v7
-            asset: sing-panel-linux-armv7
-          - target: darwin/amd64
-            asset: sing-panel-darwin-amd64
           - target: darwin/arm64
             asset: sing-panel-darwin-arm64
           - target: windows/amd64
