@@ -578,7 +578,9 @@ const removeValue = (field, index) => {
 
 const rules = {
   type: [{ required: true, message: '请选择类型', trigger: 'change' }],
-  tag: [{ required: true, message: '请输入标签', trigger: 'blur' }]
+  tag: [
+    { required: true, message: '请输入标签', trigger: 'blur' }
+  ]
 }
 
 const getTypeTag = (type) => {
@@ -680,9 +682,29 @@ const saveRuleset = async () => {
 
   const data = { id: form.value.id, type: form.value.type, tag: form.value.tag, enabled: form.value.enabled, options: cleanOptions }
 
+  data.tag = String(data.tag || '').trim()
+  let overwrite = false
+  const duplicate = rulesets.value.find(item =>
+    item.id !== data.id && String(item.tag || '').trim() === data.tag
+  )
+  if (duplicate) {
+    try {
+      await ElMessageBox.confirm(
+        `已存在名为「${data.tag}」的 Ruleset，是否覆盖？`,
+        '名称重复',
+        { confirmButtonText: '覆盖', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch (err) {
+      if (err === 'cancel' || err === 'close') return
+      throw err
+    }
+    data.id = duplicate.id
+    overwrite = true
+  }
+
   saving.value = true
   try {
-    if (editingRuleset.value) {
+    if (editingRuleset.value || overwrite) {
       await singboxApi.updateRuleset(data)
       ElMessage.success('更新成功')
     } else {

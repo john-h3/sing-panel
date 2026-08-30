@@ -203,7 +203,9 @@ const tunStrictRoute = ref(true)
 
 const rules = {
   type: [{ required: true, message: '请选择类型', trigger: 'change' }],
-  tag: [{ required: true, message: '请输入标签', trigger: 'blur' }],
+  tag: [
+    { required: true, message: '请输入标签', trigger: 'blur' }
+  ],
   listenPort: [
     {
       required: true,
@@ -330,6 +332,7 @@ const saveInbound = async () => {
   }
 
   const payload = { ...form.value }
+  let overwrite = false
 
   if (payload.type === 'tun') {
     delete payload.listen
@@ -367,9 +370,28 @@ const saveInbound = async () => {
     }
   }
 
+  payload.tag = String(payload.tag || '').trim()
+  const duplicate = inbounds.value.find(item =>
+    item.id !== payload.id && String(item.tag || '').trim() === payload.tag
+  )
+  if (duplicate) {
+    try {
+      await ElMessageBox.confirm(
+        `已存在名为「${payload.tag}」的 Inbound，是否覆盖？`,
+        '名称重复',
+        { confirmButtonText: '覆盖', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch (err) {
+      if (err === 'cancel' || err === 'close') return
+      throw err
+    }
+    payload.id = duplicate.id
+    overwrite = true
+  }
+
   saving.value = true
   try {
-    if (editingInbound.value) {
+    if (editingInbound.value || overwrite) {
       await singboxApi.updateInbound(payload)
       ElMessage.success('更新成功')
     } else {

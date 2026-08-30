@@ -16,6 +16,16 @@ type SingBoxConfigHandler struct {
 	configService *services.ConfigService
 }
 
+func configValidationStatus(err error) int {
+	if services.IsDuplicateTagError(err) {
+		return http.StatusConflict
+	}
+	if services.IsRequiredTagError(err) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
 func NewSingBoxConfigHandler(service *services.SingBoxConfigService, configService *services.ConfigService) *SingBoxConfigHandler {
 	return &SingBoxConfigHandler{service: service, configService: configService}
 }
@@ -67,7 +77,7 @@ func (h *SingBoxConfigHandler) AddInbound(c *gin.Context) {
 
 	inbound, err := h.service.AddInbound(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(configValidationStatus(err), gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -93,7 +103,7 @@ func (h *SingBoxConfigHandler) UpdateInbound(c *gin.Context) {
 
 	inbound, err := h.service.UpdateInbound(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(configValidationStatus(err), gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -161,7 +171,7 @@ func (h *SingBoxConfigHandler) AddOutbound(c *gin.Context) {
 
 	outbound, err := h.service.AddOutbound(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(configValidationStatus(err), gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -187,7 +197,7 @@ func (h *SingBoxConfigHandler) UpdateOutbound(c *gin.Context) {
 
 	outbound, err := h.service.UpdateOutbound(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(configValidationStatus(err), gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -259,7 +269,7 @@ func (h *SingBoxConfigHandler) AddRuleset(c *gin.Context) {
 
 	ruleset, err := h.service.AddRuleset(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(configValidationStatus(err), gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -287,7 +297,7 @@ func (h *SingBoxConfigHandler) AddRulesets(c *gin.Context) {
 
 	rulesets, err := h.service.AddRulesets(req.Rulesets)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(configValidationStatus(err), gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -313,7 +323,7 @@ func (h *SingBoxConfigHandler) UpdateRuleset(c *gin.Context) {
 
 	ruleset, err := h.service.UpdateRuleset(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(configValidationStatus(err), gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -438,7 +448,7 @@ func (h *SingBoxConfigHandler) ImportLink(c *gin.Context) {
 	// Save to config
 	saved, err := h.service.AddOutbound(outbound)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(configValidationStatus(err), gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -681,7 +691,7 @@ func (h *SingBoxConfigHandler) UpdateDNS(c *gin.Context) {
 	}
 
 	if err := h.service.UpdateDNS(req); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(configValidationStatus(err), gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -724,7 +734,7 @@ func (h *SingBoxConfigHandler) AddService(c *gin.Context) {
 
 	svc, err := h.service.AddService(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(configValidationStatus(err), gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -750,7 +760,7 @@ func (h *SingBoxConfigHandler) UpdateService(c *gin.Context) {
 
 	svc, err := h.service.UpdateService(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(configValidationStatus(err), gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -818,7 +828,7 @@ func (h *SingBoxConfigHandler) AddHTTPClient(c *gin.Context) {
 
 	client, err := h.service.AddHTTPClient(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(configValidationStatus(err), gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -844,7 +854,7 @@ func (h *SingBoxConfigHandler) UpdateHTTPClient(c *gin.Context) {
 
 	client, err := h.service.UpdateHTTPClient(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(configValidationStatus(err), gin.H{
 			"success": false,
 			"error":   err.Error(),
 		})

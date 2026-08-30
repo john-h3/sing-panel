@@ -609,7 +609,9 @@ const setLoadBalanceWeight = (tag, value) => {
 
 const rules = {
   type: [{ required: true, message: '请选择类型', trigger: 'change' }],
-  tag: [{ required: true, message: '请输入标签', trigger: 'blur' }]
+  tag: [
+    { required: true, message: '请输入标签', trigger: 'blur' }
+  ]
 }
 
 const getTypeTag = (type) => {
@@ -819,9 +821,29 @@ const saveOutbound = async () => {
   // Sync VLESS helper fields to options
   syncVlessOptions()
 
+  form.value.tag = String(form.value.tag || '').trim()
+  let overwrite = false
+  const duplicate = outbounds.value.find(item =>
+    item.id !== form.value.id && String(item.tag || '').trim() === form.value.tag
+  )
+  if (duplicate) {
+    try {
+      await ElMessageBox.confirm(
+        `已存在名为「${form.value.tag}」的 Outbound，是否覆盖？`,
+        '名称重复',
+        { confirmButtonText: '覆盖', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch (err) {
+      if (err === 'cancel' || err === 'close') return
+      throw err
+    }
+    form.value.id = duplicate.id
+    overwrite = true
+  }
+
   saving.value = true
   try {
-    if (editingOutbound.value) {
+    if (editingOutbound.value || overwrite) {
       await singboxApi.updateOutbound(form.value)
       ElMessage.success('更新成功')
     } else {

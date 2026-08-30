@@ -102,7 +102,9 @@ const httpDetour = ref('')
 const httpHostList = ref([])
 
 const rules = {
-  tag: [{ required: true, message: '请输入标签', trigger: 'blur' }]
+  tag: [
+    { required: true, message: '请输入标签', trigger: 'blur' }
+  ]
 }
 
 const resetHttpFields = () => {
@@ -177,10 +179,30 @@ const saveClient = async () => {
 
   const payload = { ...form.value, options: opts }
 
+  payload.tag = String(payload.tag || '').trim()
+  let overwrite = false
+  const duplicate = httpClients.value.find(item =>
+    item.id !== payload.id && String(item.tag || '').trim() === payload.tag
+  )
+  if (duplicate) {
+    try {
+      await ElMessageBox.confirm(
+        `已存在名为「${payload.tag}」的 HTTP Client，是否覆盖？`,
+        '名称重复',
+        { confirmButtonText: '覆盖', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch (err) {
+      if (err === 'cancel' || err === 'close') return
+      throw err
+    }
+    payload.id = duplicate.id
+    overwrite = true
+  }
+
   saving.value = true
   try {
-    if (editingClient.value) {
-      payload.id = editingClient.value.id
+    if (editingClient.value || overwrite) {
+      if (editingClient.value) payload.id = editingClient.value.id
       await singboxApi.updateHTTPClient(payload)
       ElMessage.success('更新成功')
     } else {

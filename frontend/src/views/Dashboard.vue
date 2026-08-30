@@ -20,10 +20,15 @@
                 <el-icon><Monitor /></el-icon>
                 <span>{{ dashboard.name || `Dashboard ${index + 1}` }}</span>
                 <span class="url-text">{{ dashboard.url }}</span>
-                <el-button type="primary" size="small" @click="refreshIframe(index)">
-                  <el-icon><RefreshRight /></el-icon>
-                  刷新
-                </el-button>
+                <div class="card-actions">
+                  <el-button type="primary" size="small" @click="refreshIframe(index)">
+                    <el-icon><RefreshRight /></el-icon>
+                    刷新
+                  </el-button>
+                  <el-button type="warning" size="small" @click="resetDashboard">
+                    重置
+                  </el-button>
+                </div>
               </div>
             </template>
             <div class="iframe-container">
@@ -58,7 +63,9 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { configApi } from '../api/config'
+import { processApi } from '../api/process'
 import { Monitor, RefreshRight } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -78,6 +85,26 @@ const refreshIframe = (index) => {
   const iframe = iframeRefs.value[index]
   if (iframe && dashboards.value[index]) {
     iframe.src = dashboards.value[index].url
+  }
+}
+
+const resetDashboard = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '该操作会清空 Dashboard 缓存并重启内核，确定继续吗？',
+      '重置 Dashboard',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    await processApi.resetDashboard()
+    ElMessage.success('Dashboard 缓存已清空，内核正在重启')
+  } catch (err) {
+    if (err !== 'cancel' && err !== 'close') {
+      ElMessage.error('Dashboard 重置失败')
+    }
   }
 }
 
@@ -111,7 +138,8 @@ onMounted(() => {
 .dashboard-card { background: var(--bg-card); border-color: var(--border-color); border: none; height: 100%; display: flex; flex-direction: column; }
 .dashboard-card :deep(.el-card__body) { flex: 1; overflow: hidden; padding: 0; }
 .card-header { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-primary); }
-.card-header .el-button { margin-left: auto; }
+.card-actions { display: flex; gap: 8px; margin-left: auto; }
+.card-actions .el-button { margin-left: 0; }
 .url-text { font-size: 12px; color: var(--text-secondary); margin-left: 8px; }
 .iframe-container { width: 100%; height: 100%; border: 1px solid var(--border-color); border-radius: 4px; overflow: hidden; }
 .dashboard-iframe { width: 100%; height: 100%; border: none; }

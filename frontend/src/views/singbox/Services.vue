@@ -176,7 +176,9 @@ const apiDashboardUpdateInterval = ref('')
 
 const rules = {
   type: [{ required: true, message: '请选择类型', trigger: 'change' }],
-  tag: [{ required: true, message: '请输入标签', trigger: 'blur' }]
+  tag: [
+    { required: true, message: '请输入标签', trigger: 'blur' }
+  ]
 }
 
 const resetApiFields = () => {
@@ -274,10 +276,30 @@ const saveService = async () => {
     payload.options = opts
   }
 
+  payload.tag = String(payload.tag || '').trim()
+  let overwrite = false
+  const duplicate = services.value.find(item =>
+    item.id !== payload.id && String(item.tag || '').trim() === payload.tag
+  )
+  if (duplicate) {
+    try {
+      await ElMessageBox.confirm(
+        `已存在名为「${payload.tag}」的 Service，是否覆盖？`,
+        '名称重复',
+        { confirmButtonText: '覆盖', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch (err) {
+      if (err === 'cancel' || err === 'close') return
+      throw err
+    }
+    payload.id = duplicate.id
+    overwrite = true
+  }
+
   saving.value = true
   try {
-    if (editingService.value) {
-      payload.id = editingService.value.id
+    if (editingService.value || overwrite) {
+      if (editingService.value) payload.id = editingService.value.id
       await singboxApi.updateService(payload)
       ElMessage.success('更新成功')
     } else {

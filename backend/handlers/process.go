@@ -102,3 +102,20 @@ func (h *ProcessHandler) Restart(c *gin.Context) {
 		"message": "Sing-Box restarted",
 	})
 }
+
+// ResetDashboard removes the downloaded dashboard cache and restarts sing-box
+// so the configured dashboard is downloaded again.
+func (h *ProcessHandler) ResetDashboard(c *gin.Context) {
+	if err := h.service.ResetDashboardCache(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Dashboard cache reset and Sing-Box restarted",
+	})
+}

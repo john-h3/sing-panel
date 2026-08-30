@@ -132,7 +132,7 @@ func main() {
 	kernelService := services.NewKernelService(db)
 	singboxConfigService := services.NewSingBoxConfigService(db, configService)
 	statsService := services.NewStatsService(db)
-	processService := services.NewProcessService(db, singboxConfigService, kernelService, statsService)
+	processService := services.NewProcessService(db, singboxConfigService, kernelService, statsService, *dataDir)
 
 	// Mark kernel as installed (embedded mode)
 	kernelService.SetInstalled(true)
@@ -295,6 +295,7 @@ func main() {
 			process.POST("/start", processHandler.Start)
 			process.POST("/stop", processHandler.Stop)
 			process.POST("/restart", processHandler.Restart)
+			process.POST("/reset-dashboard", processHandler.ResetDashboard)
 		}
 
 		stats := api.Group("/stats")

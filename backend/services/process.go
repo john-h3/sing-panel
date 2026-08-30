@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,16 +19,18 @@ type ProcessService struct {
 	configService *SingBoxConfigService
 	kernelService *KernelService
 	statsService  *StatsService
+	dataDir       string
 	mu            sync.RWMutex
 	runtimeConfig json.RawMessage
 }
 
-func NewProcessService(db *Database, configService *SingBoxConfigService, kernelService *KernelService, statsService *StatsService) *ProcessService {
+func NewProcessService(db *Database, configService *SingBoxConfigService, kernelService *KernelService, statsService *StatsService, dataDir string) *ProcessService {
 	return &ProcessService{
 		db:            db,
 		configService: configService,
 		kernelService: kernelService,
 		statsService:  statsService,
+		dataDir:       dataDir,
 	}
 }
 
@@ -144,6 +149,66 @@ func (s *ProcessService) Restart() error {
 
 	// Start
 	return s.Start()
+}
+
+// ResetDashboardCache removes the downloaded API dashboard and restarts the
+// embedded kernel so sing-box downloads it again on startup.
+func (s *ProcessService) ResetDashboardCache() error {
+	path := "dashboard"
+	services, err := s.configService.GetServices()
+	if err != nil {
+		return fmt.Errorf("failed to load services: %w", err)
+	}
+	for _, service := range services {
+		if service.Type != "api" || !service.Enabled {
+			continue
+		}
+		if dashboard, ok := service.Options["dashboard"].(map[string]interface{}); ok {
+			if configuredPath, ok := dashboard["path"].(string); ok && strings.TrimSpace(configuredPath) != "" {
+				path = os.ExpandEnv(strings.TrimSpace(configuredPath))
+			}
+		}
+		break
+	}
+
+	baseDir := s.dataDir
+	if baseDir == "" {
+		baseDir, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to resolve working directory: %w", err)
+		}
+	}
+	baseDir, err = filepath.Abs(baseDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve data directory: %w", err)
+	}
+	baseDir = filepath.Clean(baseDir)
+	relativePath := !filepath.IsAbs(path)
+	if relativePath {
+		path = filepath.Join(baseDir, path)
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("failed to resolve dashboard path: %w", err)
+	}
+	cleanPath := filepath.Clean(path)
+	if relativePath {
+		rel, err := filepath.Rel(baseDir, cleanPath)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("refusing to remove dashboard path outside data directory: %q", cleanPath)
+		}
+	}
+	if cleanPath == baseDir || cleanPath == string(filepath.Separator) || cleanPath == filepath.Dir(cleanPath) {
+		return fmt.Errorf("refusing to remove unsafe dashboard path %q", cleanPath)
+	}
+	if err := os.RemoveAll(cleanPath); err != nil {
+		return fmt.Errorf("failed to remove dashboard cache: %w", err)
+	}
+
+	if err := s.Restart(); err != nil {
+		return fmt.Errorf("dashboard cache removed, but kernel restart failed: %w", err)
+	}
+	return nil
 }
 
 // generateConfigJSON generates the sing-box config as JSON bytes

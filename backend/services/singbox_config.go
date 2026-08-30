@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -27,6 +28,101 @@ type SingBoxConfigService struct {
 	commonTreeCache map[string]interface{}
 	commonTreeTime  time.Time
 	configService   *ConfigService
+}
+
+// DuplicateTagError is returned when a tag is already used by another
+// resource of the same type.
+type DuplicateTagError struct {
+	Resource string
+	Tag      string
+}
+
+func (e *DuplicateTagError) Error() string {
+	return fmt.Sprintf("duplicate %s tag %q", e.Resource, e.Tag)
+}
+
+// IsDuplicateTagError reports whether err is a duplicate-tag validation error.
+func IsDuplicateTagError(err error) bool {
+	var duplicate *DuplicateTagError
+	return errors.As(err, &duplicate)
+}
+
+// RequiredTagError is returned when a named configuration resource has no tag.
+type RequiredTagError struct {
+	Resource string
+}
+
+func (e *RequiredTagError) Error() string {
+	return fmt.Sprintf("%s tag is required", e.Resource)
+}
+
+// IsRequiredTagError reports whether err is a missing-tag validation error.
+func IsRequiredTagError(err error) bool {
+	var required *RequiredTagError
+	return errors.As(err, &required)
+}
+
+func validateTag(resource, tag string, existing []string) (string, error) {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return "", &RequiredTagError{Resource: resource}
+	}
+	for _, candidate := range existing {
+		if candidate == tag {
+			return "", &DuplicateTagError{Resource: resource, Tag: tag}
+		}
+	}
+	return tag, nil
+}
+
+func inboundTags(items []models.Inbound, excludeID string) []string {
+	var tags []string
+	for _, item := range items {
+		if item.ID != excludeID {
+			tags = append(tags, item.Tag)
+		}
+	}
+	return tags
+}
+
+func outboundTags(items []models.Outbound, excludeID string) []string {
+	var tags []string
+	for _, item := range items {
+		if item.ID != excludeID {
+			tags = append(tags, item.Tag)
+		}
+	}
+	return tags
+}
+
+func rulesetTags(items []models.Ruleset, excludeID string) []string {
+	var tags []string
+	for _, item := range items {
+		if item.ID != excludeID {
+			tags = append(tags, item.Tag)
+		}
+	}
+	return tags
+}
+
+func serviceTags(items []models.Service, excludeID string) []string {
+	var tags []string
+	for _, item := range items {
+		if item.ID != excludeID {
+			tags = append(tags, item.Tag)
+		}
+	}
+	return tags
+}
+
+func httpClientTags(items []models.HTTPClient, excludeID string) []string {
+	var tags []string
+	for _, item := range items {
+		if item.ID != excludeID {
+			tags = append(tags, item.Tag)
+		}
+	}
+	return tags
 }
 
 // customizedOutboundTypes contains outbound types implemented only by the
@@ -290,6 +386,10 @@ func (s *SingBoxConfigService) AddInbound(inbound models.Inbound) (models.Inboun
 	if inbound.ID == "" {
 		inbound.ID = uuid.New().String()
 	}
+	inbound.Tag, err = validateTag("inbound", inbound.Tag, inboundTags(config.Inbounds, ""))
+	if err != nil {
+		return models.Inbound{}, err
+	}
 
 	config.Inbounds = append(config.Inbounds, inbound)
 
@@ -307,6 +407,10 @@ func (s *SingBoxConfigService) UpdateInbound(inbound models.Inbound) (models.Inb
 	}
 
 	config, err := s.GetConfig()
+	if err != nil {
+		return models.Inbound{}, err
+	}
+	inbound.Tag, err = validateTag("inbound", inbound.Tag, inboundTags(config.Inbounds, inbound.ID))
 	if err != nil {
 		return models.Inbound{}, err
 	}
@@ -491,6 +595,10 @@ func (s *SingBoxConfigService) AddOutbound(outbound models.Outbound) (models.Out
 	if outbound.ID == "" {
 		outbound.ID = uuid.New().String()
 	}
+	outbound.Tag, err = validateTag("outbound", outbound.Tag, outboundTags(config.Outbounds, ""))
+	if err != nil {
+		return models.Outbound{}, err
+	}
 	if isCustomizedOutboundType(outbound.Type) && !customizedFeaturesEnabled(s.configService.Get()) {
 		outbound.Enabled = false
 	}
@@ -511,6 +619,10 @@ func (s *SingBoxConfigService) UpdateOutbound(outbound models.Outbound) (models.
 	}
 
 	config, err := s.GetConfig()
+	if err != nil {
+		return models.Outbound{}, err
+	}
+	outbound.Tag, err = validateTag("outbound", outbound.Tag, outboundTags(config.Outbounds, outbound.ID))
 	if err != nil {
 		return models.Outbound{}, err
 	}
@@ -649,6 +761,10 @@ func (s *SingBoxConfigService) AddRuleset(ruleset models.Ruleset) (models.Rulese
 	if ruleset.ID == "" {
 		ruleset.ID = uuid.New().String()
 	}
+	ruleset.Tag, err = validateTag("ruleset", ruleset.Tag, rulesetTags(config.Rulesets, ""))
+	if err != nil {
+		return models.Ruleset{}, err
+	}
 
 	if err := s.materializeRuleset(ruleset); err != nil {
 		return models.Ruleset{}, err
@@ -670,10 +786,17 @@ func (s *SingBoxConfigService) AddRulesets(rulesets []models.Ruleset) ([]models.
 		return nil, err
 	}
 
+	usedTags := rulesetTags(config.Rulesets, "")
 	for i := range rulesets {
 		if rulesets[i].ID == "" {
 			rulesets[i].ID = uuid.New().String()
 		}
+		var err error
+		rulesets[i].Tag, err = validateTag("ruleset", rulesets[i].Tag, usedTags)
+		if err != nil {
+			return nil, err
+		}
+		usedTags = append(usedTags, rulesets[i].Tag)
 		if err := s.materializeRuleset(rulesets[i]); err != nil {
 			return nil, err
 		}
@@ -695,6 +818,10 @@ func (s *SingBoxConfigService) UpdateRuleset(ruleset models.Ruleset) (models.Rul
 	}
 
 	config, err := s.GetConfig()
+	if err != nil {
+		return models.Ruleset{}, err
+	}
+	ruleset.Tag, err = validateTag("ruleset", ruleset.Tag, rulesetTags(config.Rulesets, ruleset.ID))
 	if err != nil {
 		return models.Ruleset{}, err
 	}
@@ -1075,6 +1202,15 @@ func (s *SingBoxConfigService) UpdateDNS(dns models.DNSConfig) error {
 	if err != nil {
 		return err
 	}
+	usedTags := make([]string, 0, len(dns.Servers))
+	for i := range dns.Servers {
+		var err error
+		dns.Servers[i].Tag, err = validateTag("dns server", dns.Servers[i].Tag, usedTags)
+		if err != nil {
+			return err
+		}
+		usedTags = append(usedTags, dns.Servers[i].Tag)
+	}
 	config.DNS = &dns
 	return s.SaveConfig(config)
 }
@@ -1098,6 +1234,10 @@ func (s *SingBoxConfigService) AddService(svc models.Service) (models.Service, e
 	if svc.ID == "" {
 		svc.ID = uuid.New().String()
 	}
+	svc.Tag, err = validateTag("service", svc.Tag, serviceTags(config.Services, ""))
+	if err != nil {
+		return models.Service{}, err
+	}
 
 	config.Services = append(config.Services, svc)
 
@@ -1115,6 +1255,10 @@ func (s *SingBoxConfigService) UpdateService(svc models.Service) (models.Service
 	}
 
 	config, err := s.GetConfig()
+	if err != nil {
+		return models.Service{}, err
+	}
+	svc.Tag, err = validateTag("service", svc.Tag, serviceTags(config.Services, svc.ID))
 	if err != nil {
 		return models.Service{}, err
 	}
@@ -1168,6 +1312,10 @@ func (s *SingBoxConfigService) AddHTTPClient(client models.HTTPClient) (models.H
 	if client.ID == "" {
 		client.ID = uuid.New().String()
 	}
+	client.Tag, err = validateTag("http client", client.Tag, httpClientTags(config.HTTPClients, ""))
+	if err != nil {
+		return models.HTTPClient{}, err
+	}
 
 	config.HTTPClients = append(config.HTTPClients, client)
 
@@ -1185,6 +1333,10 @@ func (s *SingBoxConfigService) UpdateHTTPClient(client models.HTTPClient) (model
 	}
 
 	config, err := s.GetConfig()
+	if err != nil {
+		return models.HTTPClient{}, err
+	}
+	client.Tag, err = validateTag("http client", client.Tag, httpClientTags(config.HTTPClients, client.ID))
 	if err != nil {
 		return models.HTTPClient{}, err
 	}

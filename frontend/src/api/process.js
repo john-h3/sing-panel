@@ -20,6 +20,9 @@ export const processApi = {
   },
   restart() {
     return api.post('/restart')
+  },
+  resetDashboard() {
+    return api.post('/reset-dashboard')
   }
 }
 

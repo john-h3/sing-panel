@@ -12,7 +12,7 @@
         </div>
       </template>
 
-      <el-form :model="form" label-width="140px" v-loading="loading">
+      <el-form :model="form" label-width="140px" ref="formRef" :rules="rules" v-loading="loading">
         <!-- Global Settings -->
         <el-divider content-position="left">全局设置</el-divider>
 
@@ -103,7 +103,9 @@
                 </el-select>
               </el-col>
               <el-col :span="14">
-                <el-input v-model="server.tag" placeholder="tag" />
+                <el-form-item :prop="`servers.${index}.tag`" :rules="serverTagRules">
+                  <el-input v-model="server.tag" placeholder="tag" />
+                </el-form-item>
               </el-col>
               <el-col :span="4">
                 <el-button type="danger" :icon="Delete" circle size="small" @click="removeServer(index)" />
@@ -122,12 +124,13 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { singboxApi } from '../../api/singbox'
 import { Coin, Check, Plus, Delete } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const saving = ref(false)
+const formRef = ref(null)
 const optimisticEnabled = ref(false)
 const fakeipEnabled = ref(false)
 
@@ -147,6 +150,12 @@ const defaultForm = () => ({
 })
 
 const form = ref(defaultForm())
+
+const serverTagRules = [
+  { required: true, message: '请输入 DNS 服务器标签', trigger: 'blur' }
+]
+
+const rules = {}
 
 const loadDNS = async () => {
   loading.value = true
@@ -187,10 +196,48 @@ const removeServer = (index) => {
 }
 
 const saveDNS = async () => {
+  try {
+    await formRef.value.validate()
+  } catch {
+    return
+  }
+
+  const servers = form.value.servers.map(server => ({
+    ...server,
+    tag: String(server.tag || '').trim()
+  }))
+  const duplicateTags = [...new Set(
+    servers.filter((server, index) => servers.some((other, otherIndex) =>
+      otherIndex < index && other.tag === server.tag
+    )).map(server => server.tag)
+  )]
+  if (duplicateTags.length > 0) {
+    try {
+      await ElMessageBox.confirm(
+        `DNS 服务器标签「${duplicateTags.join('、')}」已存在，是否覆盖旧配置？`,
+        '名称重复',
+        { confirmButtonText: '覆盖', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch (err) {
+      if (err === 'cancel' || err === 'close') return
+      throw err
+    }
+    const seen = new Set()
+    const deduplicated = []
+    for (let i = servers.length - 1; i >= 0; i -= 1) {
+      if (!seen.has(servers[i].tag)) {
+        seen.add(servers[i].tag)
+        deduplicated.unshift(servers[i])
+      }
+    }
+    servers.splice(0, servers.length, ...deduplicated)
+  }
+
   saving.value = true
   try {
     const data = {
       ...form.value,
+      servers,
       optimistic: optimisticEnabled.value,
       fakeip: fakeipEnabled.value ? form.value.fakeip : {}
     }
