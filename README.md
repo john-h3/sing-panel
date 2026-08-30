@@ -58,6 +58,17 @@ chmod +x build.sh
 
 默认只生成 gzip 压缩资源。如需额外生成 Brotli 资源，使用 `./build.sh linux/arm64 --brotli`；Brotli 模式会单独缓存，不会与默认模式混用。
 
+### GitHub Release
+
+仓库内置 GitHub Actions 发布流程。推送以 `v` 开头的 Git tag 后，Actions 会自动构建并创建同名 GitHub Release，上传 Linux（amd64、arm64、armv7）、macOS（amd64、arm64）和 Windows（amd64）二进制，同时生成 `SHA256SUMS` 校验文件。
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Release 创建前会分别构建前端和带 `with_utls with_quic with_gvisor with_clash_api` 标签的后端；任一目标构建失败都不会发布不完整的 Release。
+
 ### 启动脚本
 
 根目录提供了 `start.sh`（开发环境用），自动选择 `build/` 下当前平台的编译产物并启动：
