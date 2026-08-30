@@ -10,6 +10,8 @@
 - **定制化功能开关**：开关位于面板 `app_config` 中，不会下发给 sing-box；关闭时定制化 Outbound 仍可创建、编辑和删除，但不能启用，已有相关状态会自动关闭
 - **TProxy 透明代理**：启用 tproxy inbound 后，自动通过 nftables/netlink 系统调用配置防火墙规则（无需安装 iptables/nft/ip 命令行工具），客户端网关指向本机即可透明代理；停止内核时自动清理规则
 - 支持从订阅链接导入配置、GitHub GEO 规则树自动刷新
+- 配置资源标签校验：Inbound、Outbound、Ruleset、Service、HTTP Client 及 DNS 服务器标签必填；同类资源标签不能重复
+- Dashboard 管理：支持配置多个 Dashboard，并可在页面中刷新或清空当前配置的 Dashboard 缓存后重启内核
 - 实时状态监控（内存 / 协程 / GC / 运行时长 / 构建时间）
 - 健康检查接口：根据嵌入式 sing-box 内核是否运行返回 HTTP 200 / 400
 - 日志管理：统一查看面板、Gin 和 sing-box 日志，支持实时 SSE 推送、暂停/恢复和级别筛选
@@ -39,7 +41,7 @@ npm install
 npm run dev
 ```
 
-访问 http://localhost:3000
+访问 http://localhost:3000。Vite 开发服务器默认监听 `:3000`，会将 `/api` 和 `/clash_api` 请求代理到后端 `http://localhost:8080`；后端需同时启动。
 
 ### 生产构建
 
@@ -76,14 +78,6 @@ chmod +x build.sh
 cd backend && go run . --data-dir ./data   # 开发模式
 ```
 
-### 部署
-
-`deploy_test.sh` 和 `deploy_prod.sh` 会先调用 `build.sh linux/arm64` 构建 ARM64 版本，再将新二进制上传为临时文件，停止旧服务后原子替换实际的 OpenRC 执行文件；停止时会校验进程并在必要时使用 TERM/KILL，启动后会检查服务进程是否仍在运行。通过 `start.sh install` 安装的 OpenRC 服务会主动关闭日志 SSE 长连接，并配置 `TERM/10/KILL/5` 停止重试，避免服务因优雅退出超时而被误判为停止失败。部署脚本默认使用脚本内配置的远端地址，执行前请确认 SSH 免密登录和目标环境配置正确。
-
-如果面板页面在后端重启或重新部署期间保持打开，首次访问尚未加载过的页面可能遇到旧版懒加载资源失效；前端会自动刷新一次并重新加载最新资源，通常无需手动刷新浏览器。
-
-> 部署脚本匹配 `deploy_*.sh`，默认由 Git 忽略，不会被纳入版本跟踪。
-
 ### 健康检查
 
 面板默认监听 `:8080`，提供无需认证的健康检查接口：
@@ -112,6 +106,16 @@ curl -i http://127.0.0.1:8080/health
 4. **同步令牌**（可选）：面板可设置一个令牌，设置后其他面板访问导出/导入/面板信息接口必须携带该令牌（`X-Sync-Token` 头），令牌存于本机状态中，不会被配置同步覆盖
 
 一致性判断基于导出的配置数据：`config` 与 `singbox` 两个 bucket（排除 GEO 规则树缓存）；各面板本机的运行状态、managed instances、同步令牌不参与比对。
+
+## Dashboard 管理
+
+在「Dashboard」页面可以查看面板配置的多个 Dashboard，并使用「刷新」重新加载当前 iframe。若 Dashboard 资源缓存异常，可点击「重置」：确认后面板会删除配置的 Dashboard 缓存目录并重启嵌入式 sing-box，使资源在下次启动时重新下载。
+
+重置操作仅允许删除数据目录内的相对路径，或配置的安全绝对路径；删除缓存后如果内核重启失败，接口会返回错误，但已删除的缓存不会自动恢复。
+
+## 配置标签
+
+Inbound、Outbound、Ruleset、Service、HTTP Client 以及 DNS 服务器都需要填写非空标签。除 DNS 服务器在当前 DNS 配置内唯一外，其余资源的标签在同类资源中必须唯一；更新资源时可以保留自己的原标签。API 在标签为空时返回 `400 Bad Request`，同类标签重复时返回 `409 Conflict`。
 
 ## 定制化 Outbound
 
@@ -144,6 +148,7 @@ curl -i http://127.0.0.1:8080/health
 | GET | /api/kernel/monitor | 获取运行时监控数据 |
 | GET/PUT | /api/config | 读取/更新面板配置 |
 | GET/PUT | /api/singbox | 读取/保存 sing-box 配置 |
+| GET | /api/singbox/export | 导出 sing-box 配置 |
 | GET/POST/PUT/DELETE | /api/singbox/inbounds | Inbound 配置管理 |
 | GET/POST/PUT/DELETE | /api/singbox/outbounds | Outbound 配置管理 |
 | GET/POST/PUT/DELETE | /api/singbox/rulesets | Ruleset 配置管理 |
@@ -154,19 +159,33 @@ curl -i http://127.0.0.1:8080/health
 | GET/POST/PUT/DELETE | /api/singbox/http-clients | HTTP 客户端管理 |
 | GET/PUT | /api/singbox/experimental | Experimental 配置 |
 | POST | /api/singbox/import | 从订阅链接导入配置 |
-| GET/POST | /api/process/... | sing-box 进程控制（start/stop/restart/status） |
+| GET | /api/process/status | 获取 sing-box 进程状态 |
+| GET | /api/process/config | 获取当前运行时配置 |
+| POST | /api/process/start | 启动 sing-box |
+| POST | /api/process/stop | 停止 sing-box |
+| POST | /api/process/restart | 重启 sing-box |
+| POST | /api/process/reset-dashboard | 清空 Dashboard 缓存并重启 sing-box |
 | GET | /api/stats/service | 服务统计信息 |
 | GET | /api/system/init | 检测初始化系统（systemd/openrc） |
 | POST | /api/system/restart-service | 重启 sing-panel 系统服务 |
 | POST | /api/system/reboot-machine | 重启宿主机操作系统 |
-| GET/POST/PUT/DELETE | /api/instances | 多实例管理（增删改查） |
+| GET/POST | /api/instances | 多实例列表与新增 |
+| PUT/DELETE | /api/instances/:id | 更新或删除指定实例 |
 | GET | /api/instances/status | 检查全部实例状态与配置一致性 |
+| GET | /api/instances/:id/status | 检查指定实例状态 |
 | POST | /api/instances/:id/sync | 同步配置（push / pull） |
 | POST | /api/instances/sync-all | 推送本机配置到全部实例 |
 | PUT | /api/instances/sync-token | 设置同步令牌 |
 | GET | /api/instances/local-info | 本机面板信息与配置指纹 |
+| GET | /api/instances/:id/diff | 获取指定实例的配置差异 |
 | GET | /api/db/export | 导出数据库（受同步令牌保护） |
 | POST | /api/db/import | 导入数据库（受同步令牌保护） |
+| GET | /api/db/buckets | 列出数据库 bucket |
+| GET | /api/db/keys | 列出指定 bucket 的 key |
+| GET | /api/db/value | 读取指定 bucket/key 的值 |
+| PUT | /api/db/value | 写入指定 bucket/key 的值 |
+| DELETE | /api/db/value | 删除指定 bucket/key |
+| DELETE | /api/db/bucket | 删除空 bucket |
 | GET | /api/logs | 查询内存日志，支持 `limit`、`after`、`level`、`source` 参数 |
 | GET | /api/logs/stream | 通过 SSE 接收实时内存日志 |
 | DELETE | /api/logs | 清空内存日志 |
